@@ -4,6 +4,9 @@
 
 자료도 적었고 결과물은 병신 같지만 되는거 같긴하고...
 
+https://www.icloud.com/iclouddrive/099CRYzYoioedCkajYrrTjebQ#song_tts_file
+이 주소가 결과물이 있습니다. 1번은 반주 2번은 가사 3번은 가사와 반주가 섞인 겁니다.
+
 mel and gasa to mel로 작업한거라 일반적으로 code  to code 로 작업물을 만든게 아니다 보니 그런 것도 있겠지만....
 
 그럼 이만! 만약 더많은 자료로 테스트 해보실분은(1000곡 이상으로 확인 하실분. 또는 한 분)
