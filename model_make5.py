@@ -13,7 +13,7 @@ torch.backends.cuda.enable_flash_sdp(True)
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
 root = tk.Tk()
-root.title("5")
+root.title("5sum")
 img_label1 = tk.Label(root, width=1300, height=50, bg="black")
 img_label2 = tk.Label(root, width=1300, height=50, bg="black")
 img_label3 = tk.Label(root, width=1300, height=50, bg="black")
@@ -35,27 +35,46 @@ img_label7.grid(row=6, column=0)
 img_label8.grid(row=7, column=0)
 img_label9.grid(row=8, column=0)
 img_label10.grid(row=9, column=0)
+def length_regulate(memory, durations):
+    """
+    memory:    [B, Tt, D]  가사 encoder 출력
+    durations: [B, Tt]     각 토큰이 차지할 프레임 수 (정수, >=1)
+    return:
+        expanded: [B, T_max, D]
+        mel_lens: [B]  각 샘플 실제 길이
+    """
+    B, Tt, D = memory.shape
+    out_list = []
+    mel_lens = []
 
+    for b in range(B):
+        parts = []
+        for t in range(Tt):
+            d = int(durations[b, t].item())
+            d = max(1, d)
+            # [D] → [d, D] 로 반복
+            parts.append(memory[b, t].unsqueeze(0).expand(d, -1))
+        expanded = torch.cat(parts, dim=0)  # [sum_d, D]
+        out_list.append(expanded)
+        mel_lens.append(expanded.size(0))
+
+    T_max = max(mel_lens)
+    out = memory.new_zeros(B, T_max, D)
+    for b, expanded in enumerate(out_list):
+        out[b, : expanded.size(0)] = expanded
+
+    mel_lens = torch.tensor(mel_lens, device=memory.device, dtype=torch.long)
+    return out, mel_lens
 class myPrenet(nn.Module):
     def __init__(self):
         super().__init__()
         self.conv = nn.Sequential(
             nn.Conv1d(80, 160, 4, 2, 1),
-            nn.BatchNorm1d(160),
-            nn.Dropout(),
             nn.LeakyReLU(),
             nn.Conv1d(160, 320, 4, 2, 1),
-            nn.BatchNorm1d(320),
-            nn.Dropout(),
             nn.LeakyReLU(),
             nn.Conv1d(320, 512, 4, 2, 1),
-            nn.BatchNorm1d(512),
-            nn.Dropout(),
             nn.LeakyReLU(),
-            nn.Conv1d(512, 512, 4, 2, 1),
-            nn.BatchNorm1d(512),
-            nn.Dropout(),
-            nn.LeakyReLU(),            
         )
     def forward(self, x):
         x = x.permute(0,2,1)
@@ -70,186 +89,139 @@ class Musiclm2(nn.Module):
         d_model =512
         n_mel_channels = 80
         self.n_mel_channels = n_mel_channels
-        self.positinoal_encoding = PositionalEncoding(d_model, max_len=500*3)  
+        self.positinoal_encoding = PositionalEncoding(d_model, max_len=250*8)  
         #8000 4000 2000 1000 500
 
-        self.transformer4s_1 = nn.ModuleList([nn.TransformerEncoder(nn.TransformerEncoderLayer(d_model, 8, dim_feedforward=d_model*4, batch_first=True), 1) for _ in range(10)])  
-        self.transformer4s_2 = nn.ModuleList([nn.TransformerEncoder(nn.TransformerEncoderLayer(d_model, 8, dim_feedforward=d_model*4, batch_first=True), 1) for _ in range(10)])     
-        #self.transformer4s_2 = nn.ModuleList([nn.Transformer(d_model, 8,1, 1, dim_feedforward=d_model*4, batch_first=True, dropout=0) for _ in range(10)]) 
-        # self.transformer4_3 = nn.TransformerEncoder(nn.TransformerEncoderLayer(d_model, 8, dim_feedforward=d_model*4, batch_first=True),1)
-        # self.transformer4_4 = nn.TransformerEncoder(nn.TransformerEncoderLayer(d_model, 8, dim_feedforward=d_model*4, batch_first=True),1)
-        # self.transformer4_5 = nn.TransformerEncoder(nn.TransformerEncoderLayer(d_model, 8, dim_feedforward=d_model*4, batch_first=True),1)
-        
-
-        self.embedding2 = nn.Embedding(n_symbols, 80)#160)
-        self.embedding3 = nn.Embedding(n_symbols, 80)#160)
-        self.text_prenet2 = myPrenet()
-        self.text_prenet3 = myPrenet()
-        self.prenet2 =  myPrenet()
-        self.prenet3 =  myPrenet()
-        self.linear_projection2 = nn.Sequential(
-            nn.ConvTranspose1d(512, 512, 4, 2, 1),
-            nn.BatchNorm1d(512),
-            # nn.Dropout(),
-            nn.LeakyReLU(),
-            nn.ConvTranspose1d(512, 320, 4, 2, 1),
-            nn.BatchNorm1d(320),
-            # nn.Dropout(),
+        self.transformer1s_1 = nn.TransformerEncoder(nn.TransformerEncoderLayer(d_model, 32, batch_first=True), 1)
+        self.transformer1s_2 = nn.MultiheadAttention(d_model, 32, batch_first=True)
+        self.transformer1s_3 = nn.Transformer(d_model, 32, 1, 1, batch_first=True)
+      
+        self.embedding1 = nn.Embedding(n_symbols, 80)#160)
+        self.text_prenet1 = myPrenet()
+        self.prenet1 =  myPrenet()
+      
+        self.linear_projection1 = nn.Sequential(
+            nn.ConvTranspose1d(512, 320, 4, 2, 1),  
             nn.LeakyReLU(),
             nn.ConvTranspose1d(320, 160, 4, 2, 1),
-            nn.BatchNorm1d(160),
-            # nn.Dropout(),
             nn.LeakyReLU(),
-            nn.ConvTranspose1d(160, 80, 4, 2, 1) 
-        )
-        self.linear_projection3 = nn.Sequential(
-            nn.ConvTranspose1d(512, 512, 4, 2, 1),
-            nn.BatchNorm1d(512),
-            # nn.Dropout(),
-            nn.LeakyReLU(),
-            nn.ConvTranspose1d(512, 320, 4, 2, 1),
-            nn.BatchNorm1d(320),
-            # nn.Dropout(),
-            nn.LeakyReLU(),
-            nn.ConvTranspose1d(320, 160, 4, 2, 1),
-            nn.BatchNorm1d(160),
-            # nn.Dropout(),
-            nn.LeakyReLU(),
-            nn.ConvTranspose1d(160, 80, 4, 2, 1) 
+            nn.ConvTranspose1d(160, 80, 4, 2, 1) ,
+            nn.Tanh()
         )
                         
-        
-    def forward(self, x, y1):
+
+        self.transformer2s_1 = nn.MultiheadAttention(d_model, 32, batch_first=True)
+        self.transformer2s_2 = nn.TransformerEncoder(nn.TransformerEncoderLayer(d_model, 32, batch_first=True), 1)
+              
+        self.embedding2 = nn.Embedding(n_symbols, 80)#160)
+        self.text_prenet2 = myPrenet()
+        self.prenet2 =  myPrenet()
+        self.linear_projection2 = nn.Sequential(
+            nn.ConvTranspose1d(512, 320, 4, 2, 1),  
+            nn.LeakyReLU(),
+            nn.ConvTranspose1d(320, 160, 4, 2, 1),
+            nn.LeakyReLU(),
+            nn.ConvTranspose1d(160, 80, 4, 2, 1) ,
+            nn.Tanh()
+        )
+    def forward(self, x, y1, y2=None):
+        x1 = self.embedding1(x)
+        y1= self.prenet1(y1)
+        x1 = self.text_prenet1(x1)
+
+        y1 = self.transformer1s_1(self.positinoal_encoding(y1))
+        x1, _ = self.transformer1s_2(y1, x1, x1)        
+        y1 = self.transformer1s_3(y1, x1)
+        mel1 = self.linear_projection1(y1.permute(0,2,1)).permute(0,2,1)
+
+
+
         x2 = self.embedding2(x)
+        if y2 is None:
+            y2 = self.prenet2(mel1)
+        elif y2 is not None:
+            y2 = self.prenet2(y2)
         x2 = self.text_prenet2(x2)
     
-        y= self.prenet2(y1)
-        x_2_1 = x2
-        y_2_1 = y
-        for transformer in self.transformer4s_1:
-            y_2 = y_2_1
-            y_2 = transformer(self.positinoal_encoding(torch.cat([x_2_1, y_2], dim=1)))[:, -y_2.shape[1]:, :]
-            y_2_1 = y_2 + y_2_1
+        x2, _ = self.transformer2s_1(y2, x2, x2)
+        out = self.transformer2s_2(x2)
+        mel2 = self.linear_projection2(out.permute(0,2,1)).permute(0,2,1)
 
-     
-        mel2 = self.linear_projection2(y_2_1.permute(0,2,1)).permute(0,2,1)
-
-        x2 = self.embedding3(x)
-        x2 = self.text_prenet3(x2)
-        
-        y= self.prenet3(mel2)
-        x_2_1 = x2
-        y_2_1 = y
-        for transformer in self.transformer4s_2:
-            x_2 = x_2_1
-            x_2 = transformer(self.positinoal_encoding(torch.cat([y_2_1, x_2], dim=1)))[:, -x_2.shape[1]:, :]
-            x_2_1 = x_2 + x_2_1
-        
-             
-        mel3 = self.linear_projection3(x_2_1.permute(0,2,1)).permute(0,2,1)
-
-
-        sum_mel = torch.logaddexp(mel2*12, mel3*12)/12
-        return mel2, mel3, sum_mel
-
-class MelLoss(nn.Module):
-    def __init__(
-        self,
-        l1_weight=1.0,
-        l2_weight=0.5,
-        time_weight=0.5,
-        freq_weight=0.5,
-        sc_weight=0.1,
-    ):
-        super().__init__()
-
-        self.l1_weight = l1_weight
-        self.l2_weight = l2_weight
-        self.time_weight = time_weight
-        self.freq_weight = freq_weight
-        self.sc_weight = sc_weight
-
-    def forward(self, pred, target):
-        """
-        pred   : [B, n_mels, T] 또는 [B, T, n_mels]
-        target : pred와 동일한 shape
-
-        이미 log-mel인 경우를 가정.
-        """
-
-        # -------------------------------------------------
-        # 1. 기본 L1 loss
-        # -------------------------------------------------
-        l1 = F.l1_loss(pred, target)
-
-        # -------------------------------------------------
-        # 2. L2 loss
-        # -------------------------------------------------
-        l2 = F.mse_loss(pred, target)
-
-        # -------------------------------------------------
-        # 3. 시간축 변화량 loss
-        # -------------------------------------------------
-        pred_time = pred[..., 1:] - pred[..., :-1]
-        target_time = target[..., 1:] - target[..., :-1]
-
-        time_loss = F.l1_loss(pred_time, target_time)
-
-        # -------------------------------------------------
-        # 4. 주파수축 변화량 loss
-        # -------------------------------------------------
-        pred_freq = pred[:, 1:, ...] - pred[:, :-1, ...]
-        target_freq = target[:, 1:, ...] - target[:, :-1, ...]
-
-        freq_loss = F.l1_loss(pred_freq, target_freq)
-
-        # -------------------------------------------------
-        # 5. Spectral Convergence
-        # -------------------------------------------------
-        diff = pred - target
-
-        numerator = torch.linalg.vector_norm(
-            diff.reshape(diff.shape[0], -1),
-            dim=1
-        )
-
-        denominator = torch.linalg.vector_norm(
-            target.reshape(target.shape[0], -1),
-            dim=1
-        )
-
-        sc = (numerator / (denominator + 1e-8)).mean()
-
-        # -------------------------------------------------
-        # 최종 loss
-        # -------------------------------------------------
-        loss = (
-            self.l1_weight * l1
-            + self.l2_weight * l2
-            + self.time_weight * time_loss
-            + self.freq_weight * freq_loss
-            + self.sc_weight * sc
-        )
-
-        return loss
+        mel3 = torch.logaddexp(mel1 * 12, mel2 * 12)/12
+        return mel1, mel2, mel3
     
+    
+
+ 
+class GanModel(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.seq = nn.Sequential(
+            nn.Conv1d(80, 128, 4, 2, 1),
+            nn.BatchNorm1d(128),
+            nn.LeakyReLU(),
+            nn.Conv1d(128, 256, 4, 2, 1),
+            nn.BatchNorm1d(256),
+            nn.LeakyReLU(),
+            nn.Conv1d(256, 512, 4, 2, 1),
+            nn.BatchNorm1d(512),
+            nn.LeakyReLU()
+        )
+
+    def forward(self, x):
+        out = self.seq(x.permute(0,2,1)).permute(0,2,1)
+        return out    
+
+def mel_structure_loss(pred, target):
+    # 이미 log-mel이므로 log() 하지 않음
+
+    l1 = F.l1_loss(pred, target)
+
+    mse = F.mse_loss(pred, target)
+
+    # 시간축 변화
+    dt_pred = pred[:, 1:] - pred[:, :-1]
+    dt_target = target[:, 1:] - target[:, :-1]
+    dt = F.l1_loss(dt_pred, dt_target)
+
+    # mel 주파수축 변화
+    df_pred = pred[:, :, 1:] - pred[:, :, :-1]
+    df_target = target[:, :, 1:] - target[:, :, :-1]
+    df = F.l1_loss(df_pred, df_target)
+
+    return (
+        1.0 * l1
+        + 0.5 * mse
+        + 1.0 * dt
+        + 0.5 * df
+    )
 g_model1 = Musiclm2().to(device)
-# d_model1 = MultiScaleDiscriminator().to(device)
-# d_model2 = MultiScaleDiscriminator().to(device)
+d_model1 = GanModel().to(device)
+d_model2 = GanModel().to(device)
+d_model3 = GanModel().to(device)
 # d_model3 = MultiScaleDiscriminator().to(device)
-g_model1 = torch.load(
-   "./pth_save/2g590000.pt",
-   weights_only=False,
-)
+# g_model1 = torch.load(
+#    "./pth_save/1g120000.pt",
+#    weights_only=False,
+# )
+
+# d_model1 = torch.load(
+#    "./pth_save/1d1120000.pt",
+#    weights_only=False,
+# )
+
+# d_model2 = torch.load(
+#    "./pth_save/1d2120000.pt",
+#    weights_only=False,
+# )
 
 
+optimizerG = torch.optim.Adam(g_model1.parameters(), lr=1e-4, betas=(0.0, 0.99))
+optimizerD = torch.optim.Adam(
+        list(d_model1.parameters()) + list(d_model2.parameters()) + list(d_model3.parameters()), lr=1e-4, betas=(0.0, 0.99))
 
-optimizerG = torch.optim.Adam(g_model1.parameters(), lr=1e-4)#, betas=(0.0, 0.99))
-# optimizerD = torch.optim.Adam(
-#         list(d_model1.parameters()) + list(d_model2.parameters()) + list(d_model3.parameters()), lr=1e-4, betas=(0.0, 0.99))
-
-criterion_gan = MelLoss() # LSGAN 손실함수 주로 사용
-while_number = 590000
+criterion_gan = nn.BCEWithLogitsLoss() # LSGAN 손실함수 주로 사용
+while_number = 0
 encoding_texts_batch =np.load(f"./np_data/encoding_texts_batch.npy")
 break_batch = np.load(f"./np_data/break_batch.npy")
 accompaniment_batch = np.load(f"./np_data/accompaniment_batch.npy")
@@ -263,9 +235,9 @@ while True:
         for epoch in range(0, song_batch.shape[0], 5):
             
                 g_model1.train()
-                # d_model1.train()
-                # d_model2.train()
-                # d_model3.train()
+                d_model1.train()
+                d_model2.train()
+                d_model3.train()
                 
                 ##-12. 15
                 while_number += 1
@@ -276,31 +248,28 @@ while True:
            
            
                 fake_data3, fake_data4,output_real2,output_real_feat2, output_fake3, output_fake4,output_fake_for_G3, output_fake_for_G_feat3, output_fake_for_G4, output_fake_for_G_feat4=None, None, None, None, None, None, None, None, None, None
-                # with torch.autocast("cuda", dtype=torch.bfloat16):
-                #     output_real3s = d_model1(accompaniment_music_data)
-                #     output_real4s = d_model2(song_data)
-                #     output_real5s = d_model3(torch.logaddexp(accompaniment_music_data*12, song_data*12)/12)
+                with torch.autocast("cuda", dtype=torch.bfloat16):
+                    output_real3 = d_model1(accompaniment_music_data)
+                    output_real4 = d_model2(song_data)
+                    output_real5 = d_model3(torch.logaddexp(accompaniment_music_data*12, song_data*12)/12)
                 
-                #     fake_data3, fake_data4, fake_data5 = g_model1.forward(string_data, breaking_music_data) 
-                #     output_fake3s = d_model1(fake_data3.detach()) 
-                #     output_fake4s = d_model2(fake_data4.detach())
-                #     output_fake5s = d_model3(fake_data5.detach())
-                #     loss_D_3, loss_D_4, loss_D_5 = 0.0, 0.0, 0.0
-                #     for output_real3, output_fake3 in zip(output_real3s, output_fake3s):
-                #         loss_D_3 += criterion_gan(output_real3, torch.ones_like(output_real3)) + criterion_gan(output_fake3, torch.zeros_like(output_fake3))
-                #     for output_real4, output_fake4 in zip(output_real4s, output_fake4s):
-                #         loss_D_4 += criterion_gan(output_real4, torch.ones_like(output_real4)) + criterion_gan(output_fake4, torch.zeros_like(output_fake4))
-                #     for output_real5, output_fake5 in zip(output_real5s, output_fake5s):
-                #         loss_D_5 += criterion_gan(output_real5, torch.ones_like(output_real5)) + criterion_gan(output_fake5, torch.zeros_like(output_fake5))
-                #     loss_D = loss_D_3 + loss_D_4 + loss_D_5
+                    fake_data3, fake_data4, fake_data5 = g_model1(string_data, breaking_music_data, accompaniment_music_data) 
+                    output_fake3 = d_model1(fake_data3.detach()) 
+                    output_fake4 = d_model2(fake_data4.detach())
+                    output_fake5 = d_model3(fake_data5.detach())
+
+                    loss_D_3 = criterion_gan(output_real3, torch.ones_like(output_real3)) + criterion_gan(output_fake3, torch.zeros_like(output_fake3))
+                    loss_D_4 = criterion_gan(output_real4, torch.ones_like(output_real4)) + criterion_gan(output_fake4, torch.zeros_like(output_fake4))
+                    loss_D_5 = criterion_gan(output_real5, torch.ones_like(output_real5)) + criterion_gan(output_fake5, torch.zeros_like(output_fake5))
+                    loss_D = loss_D_3 + loss_D_4 + loss_D_5
             
-                # optimizerD.zero_grad()
-                # loss_D.backward()
-                # nn.utils.clip_grad_norm_(d_model1.parameters(), max_norm=1.0)
-                # nn.utils.clip_grad_norm_(d_model2.parameters(), max_norm=1.0)
-                # nn.utils.clip_grad_norm_(d_model3.parameters(), max_norm=1.0)
-                # nn.utils.clip_grad_norm_(g_model1.parameters(), max_norm=1.0)
-                # optimizerD.step()
+                optimizerD.zero_grad()
+                loss_D.backward()
+                nn.utils.clip_grad_norm_(d_model1.parameters(), max_norm=1.0)
+                nn.utils.clip_grad_norm_(d_model2.parameters(), max_norm=1.0)
+                nn.utils.clip_grad_norm_(d_model3.parameters(), max_norm=1.0)
+                nn.utils.clip_grad_norm_(g_model1.parameters(), max_norm=1.0)
+                optimizerD.step()
             
                 before_params = {
                     name: param.detach().clone()
@@ -310,33 +279,29 @@ while True:
 
      
                 with torch.autocast("cuda", dtype=torch.bfloat16):
-                    fake_data3, fake_data4, fake_data5= g_model1.forward(string_data, breaking_music_data) 
+                    fake_data3, fake_data4, fake_data5 = g_model1(string_data, breaking_music_data, accompaniment_music_data)
 
-                    # output_real3s = d_model1(accompaniment_music_data)
-                    # output_real4s = d_model2(song_data)
-                    # output_real5s = d_model3(torch.logaddexp(accompaniment_music_data*12, song_data*12)/12)
+                    output_real3 = d_model1(accompaniment_music_data)
+                    output_real4 = d_model2(song_data)
+                    output_real5 = d_model3(torch.logaddexp(accompaniment_music_data*12, song_data*12)/12)
 
-                    # output_fake_for_G3s = d_model1(fake_data3)      
-                    # output_fake_for_G4s = d_model2(fake_data4)
-                    # output_fake_for_G5s = d_model3(fake_data5)
+                    output_fake_for_G3 = d_model1(fake_data3)      
+                    output_fake_for_G4 = d_model2(fake_data4)
+                    output_fake_for_G5 = d_model3(fake_data5)
 
-                    # loss_l3, loss_l4, loss_l5 = 0.0, 0.0, 0.0
-                    # for output_fake_for_G3 in output_fake_for_G3s:
-                    #     loss_l3 += criterion_gan(output_fake_for_G3, torch.ones_like(output_fake_for_G3))
-                    loss_l3 = criterion_gan(fake_data3, accompaniment_music_data)
-                    # for output_fake_for_G4 in output_fake_for_G4s:
-                    #     loss_l4 += criterion_gan(output_fake_for_G4, torch.ones_like(output_fake_for_G4))
-                    loss_l4 = criterion_gan(fake_data4, song_data)
-                    # for output_fake_for_G5 in output_fake_for_G5s:
-                    #     loss_l5 += criterion_gan(output_fake_for_G5, torch.ones_like(output_fake_for_G5))
-                    loss_l5 = criterion_gan(fake_data5, torch.logaddexp(accompaniment_music_data*12, song_data*12)/12)
-                    loss_G = loss_l3 + loss_l4 + loss_l5
+                    loss_l3_1 = criterion_gan(output_fake_for_G3, torch.ones_like(output_fake_for_G3))
+                    loss_l3_2 = mel_structure_loss(fake_data3, accompaniment_music_data)
+                    loss_l4_1 = criterion_gan(output_fake_for_G4, torch.ones_like(output_fake_for_G4))
+                    loss_l4_2 = mel_structure_loss(fake_data4, song_data)
+                    loss_l5_1 = criterion_gan(output_fake_for_G5, torch.ones_like(output_fake_for_G5))
+                    loss_l5_2 = mel_structure_loss(fake_data5, torch.logaddexp(accompaniment_music_data*12, song_data*12)/12)
+                    loss_G = loss_l3_1 + loss_l3_2 + loss_l4_1 + loss_l4_2 + loss_l5_1 + loss_l5_2
 
                 optimizerG.zero_grad()
                 loss_G.backward()
-                # nn.utils.clip_grad_norm_(d_model1.parameters(), max_norm=1.0)
-                # nn.utils.clip_grad_norm_(d_model2.parameters(), max_norm=1.0)
-                # nn.utils.clip_grad_norm_(d_model3.parameters(), max_norm=1.0)
+                nn.utils.clip_grad_norm_(d_model1.parameters(), max_norm=1.0)
+                nn.utils.clip_grad_norm_(d_model2.parameters(), max_norm=1.0)
+                nn.utils.clip_grad_norm_(d_model3.parameters(), max_norm=1.0)
                 nn.utils.clip_grad_norm_(g_model1.parameters(), max_norm=1.0)                 
                 optimizerG.step()
 
@@ -433,11 +398,11 @@ while True:
                 print(f"Learning Status       : {status}")
 
                 print("=" * 70)
-                print(f"step_number : {while_number}, loss_value : {loss_G.item()}")
+                print(f"step_number : {while_number}, loss_value :  {loss_l3_2.item()}  {loss_l4_2.item()} {loss_l5_2.item()}   ")
                 if while_number % 101 == 1:
                     g_model1.eval()
                     # d_model1.eval()
-                    # d_model2.eval()
+                    d_model2.eval()
                     # d_model3.eval()
                     with torch.no_grad():       
                         test_num = 0
@@ -445,7 +410,7 @@ while True:
                         #     [SDPBackend.FLASH_ATTENTION]
                         # ):
                         with torch.autocast("cuda", dtype=torch.bfloat16):
-                            g_fake_data3, g_fake_data4, g_fake_data5 = g_model1.forward(string_data[0:1], breaking_music_data[0:1])
+                            g_fake_data3, g_fake_data4, g_fake_data5 = g_model1(string_data[0:1], breaking_music_data[0:1])
                                         
                            
                             g_fake_datas3 = (g_fake_data3[0].permute(1,0) * 255).float().cpu().numpy().astype(np.uint8)
@@ -456,9 +421,12 @@ while True:
                             fake_datas3 = (fake_data3[0].permute(1,0)  * 255).float().cpu().numpy().astype(np.uint8)
                             fake_datas4 = (fake_data4[0].permute(1,0)  * 255).float().cpu().numpy().astype(np.uint8)
                             fake_datas5 = (fake_data5[0].permute(1,0)  * 255).float().cpu().numpy().astype(np.uint8)
+                            
                             breaking_music_datas = (breaking_music_data[0].permute(1,0) * 255).float().cpu().numpy().astype(np.uint8)
                             accompaniment_music_datas = (accompaniment_music_data[0].permute(1,0) * 255).float().cpu().numpy().astype(np.uint8)
                             song_datas = (song_data[0].permute(1,0) * 255).float().cpu().numpy().astype(np.uint8)
+                            
+                            
                             # 1. 분자 분모 모두 GPU(또는 현재 디바이스)에서 연산 진행
                             numerator = (torch.logaddexp(accompaniment_music_data[0]*12, song_data[0]*12)/12).permute(1, 0).float()
                             original_music_datas = (numerator* 255).cpu().numpy().astype(np.uint8)
@@ -538,10 +506,10 @@ while True:
                             root.update()
                 
                 if while_number % 5000 == 0:
-                    torch.save(g_model1, f"./pth_save/1g{while_number}.pt")
-                    # torch.save(d_model1, f"./pth_save/1d1{while_number}.pt")
-                    # torch.save(d_model2, f"./pth_save/1d2{while_number}.pt")
-                    # torch.save(d_model3, f"./pth_save/1d3{while_number}.pt")
+                    torch.save(g_model1, f"./pth_save/g{while_number}.pt")
+                    torch.save(d_model1, f"./pth_save/1d{while_number}.pt")
+                    torch.save(d_model2, f"./pth_save/2d{while_number}.pt")
+                    torch.save(d_model3, f"./pth_save/3d{while_number}.pt")
                     
 
                 
