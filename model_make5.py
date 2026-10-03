@@ -92,10 +92,11 @@ class Musiclm2(nn.Module):
         self.positinoal_encoding = PositionalEncoding(d_model, max_len=250*8)  
         #8000 4000 2000 1000 500
 
-        self.transformer1s_1 = nn.TransformerEncoder(nn.TransformerEncoderLayer(d_model, 32, batch_first=True), 1)
-        self.transformer1s_2 = nn.MultiheadAttention(d_model, 32, batch_first=True)
-        self.transformer1s_3 = nn.Transformer(d_model, 32, 1, 1, batch_first=True)
-      
+        self.transformer1s_1 = nn.TransformerEncoder(nn.TransformerEncoderLayer(d_model, 32, dropout=0.0, batch_first=True), 1)
+        self.transformer1s_2 = nn.MultiheadAttention(d_model, 32, dropout=0.0, batch_first=True)
+        self.transformer1s_3 = nn.Transformer(d_model, 32, 1, 1, dropout=0.0, batch_first=True)
+        self.transformer1s_4 = nn.TransformerEncoder(nn.TransformerEncoderLayer(d_model, 32, dropout=0.0, batch_first=True), 1)
+
         self.embedding1 = nn.Embedding(n_symbols, 80)#160)
         self.text_prenet1 = myPrenet()
         self.prenet1 =  myPrenet()
@@ -110,8 +111,8 @@ class Musiclm2(nn.Module):
         )
                         
 
-        self.transformer2s_1 = nn.MultiheadAttention(d_model, 32, batch_first=True)
-        self.transformer2s_2 = nn.TransformerEncoder(nn.TransformerEncoderLayer(d_model, 32, batch_first=True), 1)
+        self.transformer2s_1 = nn.MultiheadAttention(d_model, 32, dropout=0.0, batch_first=True)
+        self.transformer2s_2 = nn.TransformerEncoder(nn.TransformerEncoderLayer(d_model, 32, dropout=0.0, batch_first=True), 1)
               
         self.embedding2 = nn.Embedding(n_symbols, 80)#160)
         self.text_prenet2 = myPrenet()
@@ -132,6 +133,7 @@ class Musiclm2(nn.Module):
         y1 = self.transformer1s_1(self.positinoal_encoding(y1))
         x1, _ = self.transformer1s_2(y1, x1, x1)        
         y1 = self.transformer1s_3(y1, x1)
+        y1 = self.transformer1s_4(y1)
         mel1 = self.linear_projection1(y1.permute(0,2,1)).permute(0,2,1)
 
 
@@ -198,27 +200,27 @@ def mel_structure_loss(pred, target):
 g_model1 = Musiclm2().to(device)
 d_model1 = GanModel().to(device)
 d_model2 = GanModel().to(device)
-d_model3 = GanModel().to(device)
-# d_model3 = MultiScaleDiscriminator().to(device)
+# d_model3 = GanModel().to(device)
+# # d_model3 = MultiScaleDiscriminator().to(device)
 # g_model1 = torch.load(
-#    "./pth_save/1g120000.pt",
+#    "./pth_save/g30000.pt",
 #    weights_only=False,
 # )
 
 # d_model1 = torch.load(
-#    "./pth_save/1d1120000.pt",
+#    "./pth_save/1d30000.pt",
 #    weights_only=False,
 # )
 
 # d_model2 = torch.load(
-#    "./pth_save/1d2120000.pt",
+#    "./pth_save/2d30000.pt",
 #    weights_only=False,
 # )
 
 
 optimizerG = torch.optim.Adam(g_model1.parameters(), lr=1e-4, betas=(0.0, 0.99))
 optimizerD = torch.optim.Adam(
-        list(d_model1.parameters()) + list(d_model2.parameters()) + list(d_model3.parameters()), lr=1e-4, betas=(0.0, 0.99))
+        list(d_model1.parameters()) + list(d_model2.parameters()), lr=1e-4, betas=(0.0, 0.99))
 
 criterion_gan = nn.BCEWithLogitsLoss() # LSGAN 손실함수 주로 사용
 while_number = 0
@@ -228,7 +230,7 @@ accompaniment_batch = np.load(f"./np_data/accompaniment_batch.npy")
 origin_batch = np.load(f"./np_data/origin_batch.npy")
 song_batch = np.load(f"./np_data/song_batch.npy")
 
-scalerG = torch.amp.GradScaler("cuda")
+# scalerG = torch.amp.GradScaler("cuda")
 
 while True:
     
@@ -237,7 +239,7 @@ while True:
                 g_model1.train()
                 d_model1.train()
                 d_model2.train()
-                d_model3.train()
+                # d_model3.train()
                 
                 ##-12. 15
                 while_number += 1
@@ -248,26 +250,27 @@ while True:
            
            
                 fake_data3, fake_data4,output_real2,output_real_feat2, output_fake3, output_fake4,output_fake_for_G3, output_fake_for_G_feat3, output_fake_for_G4, output_fake_for_G_feat4=None, None, None, None, None, None, None, None, None, None
-                with torch.autocast("cuda", dtype=torch.bfloat16):
-                    output_real3 = d_model1(accompaniment_music_data)
-                    output_real4 = d_model2(song_data)
-                    output_real5 = d_model3(torch.logaddexp(accompaniment_music_data*12, song_data*12)/12)
+                #with torch.autocast("cuda", dtype=torch.bfloat16):
                 
-                    fake_data3, fake_data4, fake_data5 = g_model1(string_data, breaking_music_data, accompaniment_music_data) 
-                    output_fake3 = d_model1(fake_data3.detach()) 
-                    output_fake4 = d_model2(fake_data4.detach())
-                    output_fake5 = d_model3(fake_data5.detach())
+                output_real3 = d_model1(accompaniment_music_data)
+                output_real4 = d_model2(song_data)
+                # output_real5 = d_model3(torch.logaddexp(accompaniment_music_data*12, song_data*12)/12)
+            
+                fake_data3, fake_data4, fake_data5 = g_model1(string_data, breaking_music_data, accompaniment_music_data) 
+                output_fake3 = d_model1(fake_data3.detach()) 
+                output_fake4 = d_model2(fake_data4.detach())
+                # output_fake5 = d_model3(fake_data5.detach())
 
-                    loss_D_3 = criterion_gan(output_real3, torch.ones_like(output_real3)) + criterion_gan(output_fake3, torch.zeros_like(output_fake3))
-                    loss_D_4 = criterion_gan(output_real4, torch.ones_like(output_real4)) + criterion_gan(output_fake4, torch.zeros_like(output_fake4))
-                    loss_D_5 = criterion_gan(output_real5, torch.ones_like(output_real5)) + criterion_gan(output_fake5, torch.zeros_like(output_fake5))
-                    loss_D = loss_D_3 + loss_D_4 + loss_D_5
+                loss_D_3 = criterion_gan(output_real3, torch.ones_like(output_real3)) + criterion_gan(output_fake3, torch.zeros_like(output_fake3))
+                loss_D_4 = criterion_gan(output_real4, torch.ones_like(output_real4)) + criterion_gan(output_fake4, torch.zeros_like(output_fake4))
+                # loss_D_5 = criterion_gan(output_real5, torch.ones_like(output_real5)) + criterion_gan(output_fake5, torch.zeros_like(output_fake5))
+                loss_D = loss_D_3 + loss_D_4# + loss_D_5
             
                 optimizerD.zero_grad()
                 loss_D.backward()
                 nn.utils.clip_grad_norm_(d_model1.parameters(), max_norm=1.0)
                 nn.utils.clip_grad_norm_(d_model2.parameters(), max_norm=1.0)
-                nn.utils.clip_grad_norm_(d_model3.parameters(), max_norm=1.0)
+                # nn.utils.clip_grad_norm_(d_model3.parameters(), max_norm=1.0)
                 nn.utils.clip_grad_norm_(g_model1.parameters(), max_norm=1.0)
                 optimizerD.step()
             
@@ -278,30 +281,30 @@ while True:
                 }
 
      
-                with torch.autocast("cuda", dtype=torch.bfloat16):
-                    fake_data3, fake_data4, fake_data5 = g_model1(string_data, breaking_music_data, accompaniment_music_data)
+                #with torch.autocast("cuda", dtype=torch.bfloat16):
+                fake_data3, fake_data4, fake_data5 = g_model1(string_data, breaking_music_data, accompaniment_music_data)
 
-                    output_real3 = d_model1(accompaniment_music_data)
-                    output_real4 = d_model2(song_data)
-                    output_real5 = d_model3(torch.logaddexp(accompaniment_music_data*12, song_data*12)/12)
+                output_real3 = d_model1(accompaniment_music_data)
+                output_real4 = d_model2(song_data)
+                # output_real5 = d_model3(torch.logaddexp(accompaniment_music_data*12, song_data*12)/12)
 
-                    output_fake_for_G3 = d_model1(fake_data3)      
-                    output_fake_for_G4 = d_model2(fake_data4)
-                    output_fake_for_G5 = d_model3(fake_data5)
+                output_fake_for_G3 = d_model1(fake_data3)      
+                output_fake_for_G4 = d_model2(fake_data4)
+                # output_fake_for_G5 = d_model3(fake_data5)
 
-                    loss_l3_1 = criterion_gan(output_fake_for_G3, torch.ones_like(output_fake_for_G3))
-                    loss_l3_2 = mel_structure_loss(fake_data3, accompaniment_music_data)
-                    loss_l4_1 = criterion_gan(output_fake_for_G4, torch.ones_like(output_fake_for_G4))
-                    loss_l4_2 = mel_structure_loss(fake_data4, song_data)
-                    loss_l5_1 = criterion_gan(output_fake_for_G5, torch.ones_like(output_fake_for_G5))
-                    loss_l5_2 = mel_structure_loss(fake_data5, torch.logaddexp(accompaniment_music_data*12, song_data*12)/12)
-                    loss_G = loss_l3_1 + loss_l3_2 + loss_l4_1 + loss_l4_2 + loss_l5_1 + loss_l5_2
+                loss_l3_1 = criterion_gan(output_fake_for_G3, torch.ones_like(output_fake_for_G3))
+                loss_l3_2 = mel_structure_loss(fake_data3, accompaniment_music_data)
+                loss_l4_1 = criterion_gan(output_fake_for_G4, torch.ones_like(output_fake_for_G4))
+                loss_l4_2 = mel_structure_loss(fake_data4, song_data)
+                # loss_l5_1 = criterion_gan(output_fake_for_G5, torch.ones_like(output_fake_for_G5))
+                # loss_l5_2 = mel_structure_loss(fake_data5, torch.logaddexp(accompaniment_music_data*12, song_data*12)/12)
+                loss_G = loss_l3_1 + loss_l3_2 + loss_l4_1 + loss_l4_2# + loss_l5_1 + loss_l5_2
 
                 optimizerG.zero_grad()
                 loss_G.backward()
                 nn.utils.clip_grad_norm_(d_model1.parameters(), max_norm=1.0)
                 nn.utils.clip_grad_norm_(d_model2.parameters(), max_norm=1.0)
-                nn.utils.clip_grad_norm_(d_model3.parameters(), max_norm=1.0)
+                # nn.utils.clip_grad_norm_(d_model3.parameters(), max_norm=1.0)
                 nn.utils.clip_grad_norm_(g_model1.parameters(), max_norm=1.0)                 
                 optimizerG.step()
 
@@ -398,10 +401,10 @@ while True:
                 print(f"Learning Status       : {status}")
 
                 print("=" * 70)
-                print(f"step_number : {while_number}, loss_value :  {loss_l3_2.item()}  {loss_l4_2.item()} {loss_l5_2.item()}   ")
+                print(f"step_number : {while_number}, loss_value :  {loss_l3_2.item()}  {loss_l4_2.item()}    ")
                 if while_number % 101 == 1:
                     g_model1.eval()
-                    # d_model1.eval()
+                    d_model1.eval()
                     d_model2.eval()
                     # d_model3.eval()
                     with torch.no_grad():       
@@ -409,107 +412,107 @@ while True:
                         # with sdpa_kernel(
                         #     [SDPBackend.FLASH_ATTENTION]
                         # ):
-                        with torch.autocast("cuda", dtype=torch.bfloat16):
-                            g_fake_data3, g_fake_data4, g_fake_data5 = g_model1(string_data[0:1], breaking_music_data[0:1])
-                                        
-                           
-                            g_fake_datas3 = (g_fake_data3[0].permute(1,0) * 255).float().cpu().numpy().astype(np.uint8)
-                            g_fake_datas4 = (g_fake_data4[0].permute(1,0) * 255).float().cpu().numpy().astype(np.uint8)
-                            g_fake_datas5 = (g_fake_data5[0].permute(1,0) * 255).float().cpu().numpy().astype(np.uint8)
-
-                           
-                            fake_datas3 = (fake_data3[0].permute(1,0)  * 255).float().cpu().numpy().astype(np.uint8)
-                            fake_datas4 = (fake_data4[0].permute(1,0)  * 255).float().cpu().numpy().astype(np.uint8)
-                            fake_datas5 = (fake_data5[0].permute(1,0)  * 255).float().cpu().numpy().astype(np.uint8)
-                            
-                            breaking_music_datas = (breaking_music_data[0].permute(1,0) * 255).float().cpu().numpy().astype(np.uint8)
-                            accompaniment_music_datas = (accompaniment_music_data[0].permute(1,0) * 255).float().cpu().numpy().astype(np.uint8)
-                            song_datas = (song_data[0].permute(1,0) * 255).float().cpu().numpy().astype(np.uint8)
-                            
-                            
-                            # 1. 분자 분모 모두 GPU(또는 현재 디바이스)에서 연산 진행
-                            numerator = (torch.logaddexp(accompaniment_music_data[0]*12, song_data[0]*12)/12).permute(1, 0).float()
-                            original_music_datas = (numerator* 255).cpu().numpy().astype(np.uint8)
-
-                            img = Image.fromarray(breaking_music_datas)
-                            img = img.transpose(Image.FLIP_TOP_BOTTOM) # 저주파가 아래로 오도록 뒤집기
-                            img = img.resize((1300, 50), Image.Resampling.LANCZOS)
-                            photo = ImageTk.PhotoImage(img)
-                            img_label1.config(image=photo)
-                            img_label1.image = photo 
+                        #with torch.autocast("cuda", dtype=torch.bfloat16):
+                        g_fake_data3, g_fake_data4, g_fake_data5 = g_model1(string_data[0:1], breaking_music_data[0:1])
+                                    
                         
-                            img = Image.fromarray(g_fake_datas3)
-                            img = img.transpose(Image.FLIP_TOP_BOTTOM) # 저주파가 아래로 오도록 뒤집기
-                            img = img.resize((1300, 50), Image.Resampling.LANCZOS)
-                            photo = ImageTk.PhotoImage(img)
-                            img_label2.config(image=photo)
-                            img_label2.image = photo  # 가비지 컬렉션 방
-                            
-                            img = Image.fromarray(fake_datas3)
-                            img = img.transpose(Image.FLIP_TOP_BOTTOM) # 저주파가 아래로 오도록 뒤집기
-                            img = img.resize((1300, 50), Image.Resampling.LANCZOS)
-                            photo = ImageTk.PhotoImage(img)
-                            img_label3.config(image=photo)
-                            img_label3.image = photo  # 가비지 컬렉션 방지
+                        g_fake_datas3 = (g_fake_data3[0].permute(1,0) * 255).float().cpu().numpy().astype(np.uint8)
+                        g_fake_datas4 = (g_fake_data4[0].permute(1,0) * 255).float().cpu().numpy().astype(np.uint8)
+                        g_fake_datas5 = (g_fake_data5[0].permute(1,0) * 255).float().cpu().numpy().astype(np.uint8)
 
-                            img = Image.fromarray(accompaniment_music_datas)
-                            img = img.transpose(Image.FLIP_TOP_BOTTOM) # 저주파가 아래로 오도록 뒤집기
-                            img = img.resize((1300, 50), Image.Resampling.LANCZOS)
-                            photo = ImageTk.PhotoImage(img)
-                            img_label4.config(image=photo)
-                            img_label4.image = photo 
-
-                            img = Image.fromarray(g_fake_datas4)
-                            img = img.transpose(Image.FLIP_TOP_BOTTOM) # 저주파가 아래로 오도록 뒤집기
-                            img = img.resize((1300, 50), Image.Resampling.LANCZOS)
-                            photo = ImageTk.PhotoImage(img)
-                            img_label5.config(image=photo)
-                            img_label5.image = photo  # 가비지 컬렉션 방
-                            
-                            img = Image.fromarray(fake_datas4)
-                            img = img.transpose(Image.FLIP_TOP_BOTTOM) # 저주파가 아래로 오도록 뒤집기
-                            img = img.resize((1300, 50), Image.Resampling.LANCZOS)
-                            photo = ImageTk.PhotoImage(img)
-                            img_label6.config(image=photo)
-                            img_label6.image = photo  # 가비지 컬렉션 방지
-
-                            img = Image.fromarray(song_datas)
-                            img = img.transpose(Image.FLIP_TOP_BOTTOM) # 저주파가 아래로 오도록 뒤집기
-                            img = img.resize((1300, 50), Image.Resampling.LANCZOS)
-                            photo = ImageTk.PhotoImage(img)
-                            img_label7.config(image=photo)
-                            img_label7.image = photo 
-
-                            img = Image.fromarray(g_fake_datas5)
-                            img = img.transpose(Image.FLIP_TOP_BOTTOM) # 저주파가 아래로 오도록 뒤집기
-                            img = img.resize((1300, 50), Image.Resampling.LANCZOS)
-                            photo = ImageTk.PhotoImage(img)
-                            img_label8.config(image=photo)
-                            img_label8.image = photo  # 가비지 컬렉션 방
-                            
-                            img = Image.fromarray(fake_datas5)
-                            img = img.transpose(Image.FLIP_TOP_BOTTOM) # 저주파가 아래로 오도록 뒤집기
-                            img = img.resize((1300, 50), Image.Resampling.LANCZOS)
-                            photo = ImageTk.PhotoImage(img)
-                            img_label9.config(image=photo)
-                            img_label9.image = photo  # 가비지 컬렉션 방지
-
-                            img = Image.fromarray(original_music_datas)
-                            img = img.transpose(Image.FLIP_TOP_BOTTOM) # 저주파가 아래로 오도록 뒤집기
-                            img = img.resize((1300, 50), Image.Resampling.LANCZOS)
-                            photo = ImageTk.PhotoImage(img)
-                            img_label10.config(image=photo)
-                            img_label10.image = photo 
                         
+                        fake_datas3 = (fake_data3[0].permute(1,0)  * 255).float().cpu().numpy().astype(np.uint8)
+                        fake_datas4 = (fake_data4[0].permute(1,0)  * 255).float().cpu().numpy().astype(np.uint8)
+                        fake_datas5 = (fake_data5[0].permute(1,0)  * 255).float().cpu().numpy().astype(np.uint8)
+                        
+                        breaking_music_datas = (breaking_music_data[0].permute(1,0) * 255).float().cpu().numpy().astype(np.uint8)
+                        accompaniment_music_datas = (accompaniment_music_data[0].permute(1,0) * 255).float().cpu().numpy().astype(np.uint8)
+                        song_datas = (song_data[0].permute(1,0) * 255).float().cpu().numpy().astype(np.uint8)
+                        
+                        
+                        # 1. 분자 분모 모두 GPU(또는 현재 디바이스)에서 연산 진행
+                        numerator = (torch.logaddexp(accompaniment_music_data[0]*12, song_data[0]*12)/12).permute(1, 0).float()
+                        original_music_datas = (numerator* 255).cpu().numpy().astype(np.uint8)
+
+                        img = Image.fromarray(breaking_music_datas)
+                        img = img.transpose(Image.FLIP_TOP_BOTTOM) # 저주파가 아래로 오도록 뒤집기
+                        img = img.resize((1300, 50), Image.Resampling.LANCZOS)
+                        photo = ImageTk.PhotoImage(img)
+                        img_label1.config(image=photo)
+                        img_label1.image = photo 
+                    
+                        img = Image.fromarray(g_fake_datas3)
+                        img = img.transpose(Image.FLIP_TOP_BOTTOM) # 저주파가 아래로 오도록 뒤집기
+                        img = img.resize((1300, 50), Image.Resampling.LANCZOS)
+                        photo = ImageTk.PhotoImage(img)
+                        img_label2.config(image=photo)
+                        img_label2.image = photo  # 가비지 컬렉션 방
+                        
+                        img = Image.fromarray(fake_datas3)
+                        img = img.transpose(Image.FLIP_TOP_BOTTOM) # 저주파가 아래로 오도록 뒤집기
+                        img = img.resize((1300, 50), Image.Resampling.LANCZOS)
+                        photo = ImageTk.PhotoImage(img)
+                        img_label3.config(image=photo)
+                        img_label3.image = photo  # 가비지 컬렉션 방지
+
+                        img = Image.fromarray(accompaniment_music_datas)
+                        img = img.transpose(Image.FLIP_TOP_BOTTOM) # 저주파가 아래로 오도록 뒤집기
+                        img = img.resize((1300, 50), Image.Resampling.LANCZOS)
+                        photo = ImageTk.PhotoImage(img)
+                        img_label4.config(image=photo)
+                        img_label4.image = photo 
+
+                        img = Image.fromarray(g_fake_datas4)
+                        img = img.transpose(Image.FLIP_TOP_BOTTOM) # 저주파가 아래로 오도록 뒤집기
+                        img = img.resize((1300, 50), Image.Resampling.LANCZOS)
+                        photo = ImageTk.PhotoImage(img)
+                        img_label5.config(image=photo)
+                        img_label5.image = photo  # 가비지 컬렉션 방
+                        
+                        img = Image.fromarray(fake_datas4)
+                        img = img.transpose(Image.FLIP_TOP_BOTTOM) # 저주파가 아래로 오도록 뒤집기
+                        img = img.resize((1300, 50), Image.Resampling.LANCZOS)
+                        photo = ImageTk.PhotoImage(img)
+                        img_label6.config(image=photo)
+                        img_label6.image = photo  # 가비지 컬렉션 방지
+
+                        img = Image.fromarray(song_datas)
+                        img = img.transpose(Image.FLIP_TOP_BOTTOM) # 저주파가 아래로 오도록 뒤집기
+                        img = img.resize((1300, 50), Image.Resampling.LANCZOS)
+                        photo = ImageTk.PhotoImage(img)
+                        img_label7.config(image=photo)
+                        img_label7.image = photo 
+
+                        img = Image.fromarray(g_fake_datas5)
+                        img = img.transpose(Image.FLIP_TOP_BOTTOM) # 저주파가 아래로 오도록 뒤집기
+                        img = img.resize((1300, 50), Image.Resampling.LANCZOS)
+                        photo = ImageTk.PhotoImage(img)
+                        img_label8.config(image=photo)
+                        img_label8.image = photo  # 가비지 컬렉션 방
+                        
+                        img = Image.fromarray(fake_datas5)
+                        img = img.transpose(Image.FLIP_TOP_BOTTOM) # 저주파가 아래로 오도록 뒤집기
+                        img = img.resize((1300, 50), Image.Resampling.LANCZOS)
+                        photo = ImageTk.PhotoImage(img)
+                        img_label9.config(image=photo)
+                        img_label9.image = photo  # 가비지 컬렉션 방지
+
+                        img = Image.fromarray(original_music_datas)
+                        img = img.transpose(Image.FLIP_TOP_BOTTOM) # 저주파가 아래로 오도록 뒤집기
+                        img = img.resize((1300, 50), Image.Resampling.LANCZOS)
+                        photo = ImageTk.PhotoImage(img)
+                        img_label10.config(image=photo)
+                        img_label10.image = photo 
+                    
 
             
-                            root.update()
+                        root.update()
                 
                 if while_number % 5000 == 0:
                     torch.save(g_model1, f"./pth_save/g{while_number}.pt")
                     torch.save(d_model1, f"./pth_save/1d{while_number}.pt")
                     torch.save(d_model2, f"./pth_save/2d{while_number}.pt")
-                    torch.save(d_model3, f"./pth_save/3d{while_number}.pt")
+                    # torch.save(d_model3, f"./pth_save/3d{while_number}.pt")
                     
 
                 
