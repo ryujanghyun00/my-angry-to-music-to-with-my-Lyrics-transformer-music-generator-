@@ -126,20 +126,26 @@ class Musiclm2(nn.Module):
             nn.Tanh()
         )
     def forward(self, x, y1, y2=None):
-        x1 = self.embedding1(x)
-        y1= self.prenet1(y1)
-        x1 = self.text_prenet1(x1)
+        if y1 == "yes":
+            pass
+        else:
+            x1 = self.embedding1(x)
+            y1= self.prenet1(y1)
+            x1 = self.text_prenet1(x1)
 
-        y1 = self.transformer1s_1(self.positinoal_encoding(y1))
-        x1, _ = self.transformer1s_2(y1, x1, x1)        
-        y1 = self.transformer1s_3(y1, x1)
-        y1 = self.transformer1s_4(y1)
-        mel1 = self.linear_projection1(y1.permute(0,2,1)).permute(0,2,1)
+            y1 = self.transformer1s_1(self.positinoal_encoding(y1))
+            x1, _ = self.transformer1s_2(y1, x1, x1)        
+            y1 = self.transformer1s_3(y1, x1)
+            y1 = self.transformer1s_4(y1)
+            mel1 = self.linear_projection1(y1.permute(0,2,1)).permute(0,2,1)
 
 
 
         x2 = self.embedding2(x)
-        if y2 is None:
+        if y1 == "yes":
+            mel1 = y2
+            y2 = self.prenet2(y2)
+        elif y2 is None:
             y2 = self.prenet2(mel1)
         elif y2 is not None:
             y2 = self.prenet2(y2)
