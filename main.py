@@ -69,7 +69,6 @@ class Musiclm0(nn.Module):
         # y = self.transformer1s_4(y)
         mel1 = self.linear_projection1(y.permute(0,2,1)).permute(0,2,1)
         return mel1
-    
 class Musiclm1(nn.Module):
     def __init__(self):
         super().__init__()
@@ -120,7 +119,7 @@ model0 = torch.load(
 )
 
 model1 = torch.load(
-    "./pth_save/1g215000.pt",
+    "./pth_save/1g245000.pt",
     weights_only=False,
 )
 model0.to(device)
