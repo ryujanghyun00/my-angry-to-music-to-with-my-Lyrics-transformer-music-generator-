@@ -12,6 +12,12 @@ from modules import Postnet, TextPrenet, ConvNorm, Postnet, PositionalEncoding, 
 torch.backends.cuda.enable_flash_sdp(True)
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
+N_MELS = 80
+LAMBDA_L1 = 40.0
+LAMBDA_MSE = 2.0
+LAMBDA_FM = 10.0
+LAMBDA_ADV = 1.0
+
 root = tk.Tk()
 root.title("5_0copy")
 img_label1 = tk.Label(root, width=1300, height=50, bg="black")
@@ -93,495 +99,106 @@ class Musiclm0(nn.Module):
         mel1 = self.linear_projection1(y.permute(0,2,1)).permute(0,2,1)
         return mel1
 
-# ============================================================
-# 1. Mel Discriminator
-#    Input : [B, L, E]
-#    Output: [B, 1]
-# ============================================================
 
-class MelDiscriminator(nn.Module):
-
-    def __init__(self, mel_dim, hidden_dim=256):
+class PatchDiscriminator1D(nn.Module):
+    """1D PatchGAN that judges local temporal/spectral patterns in a mel."""
+    def __init__(self, in_channels=N_MELS, base=64):
         super().__init__()
+        layers = []
+        channels = [in_channels, base, base * 2, base * 4, base * 4]
+        for i in range(len(channels) - 1):
+            layers += [
+                nn.Conv1d(channels[i], channels[i + 1], kernel_size=5,
+                          stride=2 if i < 3 else 1, padding=2),
+                nn.LeakyReLU(0.2, inplace=True),
+            ]
+        layers.append(nn.Conv1d(channels[-1], 1, kernel_size=3, padding=1))
+        self.layers = nn.ModuleList(layers)
 
-        self.layers = nn.ModuleList([
-            nn.Conv1d(
-                mel_dim,
-                hidden_dim,
-                kernel_size=5,
-                stride=2,
-                padding=2
-            ),
-
-            nn.Conv1d(
-                hidden_dim,
-                hidden_dim * 2,
-                kernel_size=5,
-                stride=2,
-                padding=2
-            ),
-
-            nn.Conv1d(
-                hidden_dim * 2,
-                hidden_dim * 4,
-                kernel_size=5,
-                stride=2,
-                padding=2
-            ),
-
-            nn.Conv1d(
-                hidden_dim * 4,
-                hidden_dim * 4,
-                kernel_size=3,
-                stride=1,
-                padding=1
-            )
-        ])
-
-        self.norms = nn.ModuleList([
-            nn.Identity(),
-
-            nn.InstanceNorm1d(hidden_dim * 2),
-
-            nn.InstanceNorm1d(hidden_dim * 4),
-
-            nn.Identity()
-        ])
-
-        self.out = nn.Linear(
-            hidden_dim * 4,
-            1
-        )
-
-    def forward(
-        self,
-        mel,
-        return_features=False
-    ):
-        """
-        mel:
-            [B, L, E]
-
-        B = Batch
-        L = Time
-        E = Mel dimension
-        """
-
-        # [B, L, E]
-        # ->
-        # [B, E, L]
-
-        x = mel.transpose(1, 2)
-
+    def forward(self, x):
         features = []
-
-        for conv, norm in zip(
-            self.layers,
-            self.norms
-        ):
-
-            x = conv(x)
-            x = norm(x)
-            x = F.leaky_relu(
-                x,
-                negative_slope=0.2
-            )
-
-            features.append(x)
-
-        # Global temporal pooling
-        x = x.mean(dim=-1)
-
-        logits = self.out(x)
-
-        if return_features:
-            return logits, features
-
-        return logits
+        for layer in self.layers:
+            x = layer(x)
+            if isinstance(layer, nn.Conv1d):
+                features.append(x)
+        return x, features
 
 
-# ============================================================
-# 2. Multi-Scale Mel Discriminator
-# ============================================================
-
-class MultiScaleMelDiscriminator(nn.Module):
-
-    def __init__(self, mel_dim):
-
+class MultiScaleDiscriminator(nn.Module):
+    def __init__(self, scales=3):
         super().__init__()
-
-        self.discriminators = nn.ModuleList([
-
-            MelDiscriminator(
-                mel_dim=mel_dim,
-                hidden_dim=128
-            ),
-
-            MelDiscriminator(
-                mel_dim=mel_dim,
-                hidden_dim=192
-            ),
-
-            MelDiscriminator(
-                mel_dim=mel_dim,
-                hidden_dim=256
-            )
-        ])
-
-    def forward(
-        self,
-        mel,
-        return_features=False
-    ):
-
-        outputs = []
-        features = []
-
-        x = mel
-
-        for i, discriminator in enumerate(
-            self.discriminators
-        ):
-
-            if i > 0:
-
-                x = F.avg_pool1d(
-                    x.transpose(1, 2),
-                    kernel_size=2,
-                    stride=2
-                ).transpose(1, 2)
-
-            if return_features:
-
-                logits, feat = discriminator(
-                    x,
-                    return_features=True
-                )
-
-                outputs.append(logits)
-                features.append(feat)
-
-            else:
-
-                logits = discriminator(x)
-
-                outputs.append(logits)
-
-        if return_features:
-            return outputs, features
-
-        return outputs
-
-
-# ============================================================
-# 3. Phoneme Discriminator
-#
-#    Mel -> Phoneme prediction
-#
-#    Input :
-#        [B, L, E]
-#
-#    Output:
-#        [B, P, L]
-#
-#    P = number of phonemes
-# ============================================================
-
-class PhonemeDiscriminator(nn.Module):
-
-    def __init__(
-        self,
-        mel_dim,
-        num_phonemes,
-        hidden_dim=256
-    ):
-
-        super().__init__()
-
-        self.encoder = nn.Sequential(
-
-            nn.Conv1d(
-                mel_dim,
-                hidden_dim,
-                kernel_size=5,
-                padding=2
-            ),
-
-            nn.GELU(),
-
-            nn.Conv1d(
-                hidden_dim,
-                hidden_dim,
-                kernel_size=5,
-                padding=2
-            ),
-
-            nn.GELU(),
-
-            nn.Conv1d(
-                hidden_dim,
-                hidden_dim,
-                kernel_size=3,
-                padding=1
-            ),
-
-            nn.GELU()
-        )
-
-        self.classifier = nn.Conv1d(
-            hidden_dim,
-            num_phonemes,
-            kernel_size=1
+        self.discriminators = nn.ModuleList(
+            [PatchDiscriminator1D() for _ in range(scales)]
         )
 
     def forward(self, mel):
-
-        # [B, L, E]
-        # ->
-        # [B, E, L]
-
-        x = mel.transpose(1, 2)
-
-        x = self.encoder(x)
-
-        # [B, P, L]
-
-        logits = self.classifier(x)
-
-        return logits
+        scores, all_features = [], []
+        x = mel
+        for i, disc in enumerate(self.discriminators):
+            score, features = disc(x)
+            scores.append(score)
+            all_features.append(features)
+            if i != len(self.discriminators) - 1:
+                x = F.avg_pool1d(x, kernel_size=4, stride=2, padding=1)
+        return scores, all_features
 
 
-# ============================================================
-# 4. Hinge GAN Loss
-# ============================================================
+# ----------------------------- Loss functions ----------------------------
 
-def discriminator_hinge_loss(
-    real_logits,
-    fake_logits
-):
-
-    loss_real = torch.mean(
-        F.relu(
-            1.0 - real_logits
-        )
-    )
-
-    loss_fake = torch.mean(
-        F.relu(
-            1.0 + fake_logits
-        )
-    )
-
-    return loss_real + loss_fake
+def reconstruction_losses(fake, real):
+    """L1 + MSE on the same mel scale."""
+    l1 = F.l1_loss(fake, real)
+    mse = F.mse_loss(fake, real)
+    return l1, mse
 
 
-def generator_hinge_loss(
-    fake_logits
-):
-
-    return -torch.mean(
-        fake_logits
-    )
-
-
-# ============================================================
-# 5. Discriminator Total Loss
-# ============================================================
-
-def discriminator_loss(
-    real_logits,
-    fake_logits
-):
-
+def discriminator_hinge_loss(real_scores, fake_scores):
     loss = 0.0
-
-    for real, fake in zip(
-        real_logits,
-        fake_logits
-    ):
-
-        loss += discriminator_hinge_loss(
-            real,
-            fake.detach()
-        )
-
-    return loss
+    for real_s, fake_s in zip(real_scores, fake_scores):
+        loss = loss + (F.relu(1.0 - real_s).mean() +
+                       F.relu(1.0 + fake_s).mean())
+    return loss / len(real_scores)
 
 
-# ============================================================
-# 6. Mel Reconstruction Loss
-# ============================================================
-
-def mel_reconstruction_loss(
-    fake_mel,
-    real_mel
-):
-
-    return F.l1_loss(
-        fake_mel,
-        real_mel
-    )
+def generator_hinge_loss(fake_scores):
+    return sum(-score.mean() for score in fake_scores) / len(fake_scores)
 
 
-# ============================================================
-# 7. Phoneme Loss
-# ============================================================
-
-def phoneme_loss(
-    phoneme_logits,
-    phoneme_target,
-    ignore_index=-100
-):
-
+def feature_matching_loss(real_features, fake_features):
     """
-    phoneme_logits:
-        [B, P, L]
-
-    phoneme_target:
-        [B, L]
+    Stabilizes GAN training by matching intermediate discriminator features.
+    Real features are detached so this loss does not update the discriminator.
     """
-
-    return F.cross_entropy(
-        phoneme_logits,
-        phoneme_target,
-        ignore_index=ignore_index
-    )
-
-
-# ============================================================
-# 8. Feature Matching Loss
-# ============================================================
-
-def feature_matching_loss(
-    real_features,
-    fake_features
-):
-
-    loss = 0.0
-
-    for real_scale, fake_scale in zip(
-        real_features,
-        fake_features
-    ):
-
-        for real_feature, fake_feature in zip(
-            real_scale,
-            fake_scale
-        ):
-
-            loss += F.l1_loss(
-                fake_feature,
-                real_feature.detach()
-            )
-
-    return loss
+    total = 0.0
+    count = 0
+    for real_scale, fake_scale in zip(real_features, fake_features):
+        for real_layer, fake_layer in zip(real_scale, fake_scale):
+            total = total + F.l1_loss(fake_layer, real_layer.detach())
+            count += 1
+    return total / max(count, 1)
 
 
-# ============================================================
-# 9. Generator Total Loss
-# ============================================================
-
-def generator_loss(
-    fake_mel,
-    real_mel,
-
-    fake_logits,
-
-    real_features,
-    fake_features,
-
-    phoneme_logits=None,
-    phoneme_target=None,
-
-    lambda_adv=1.0,
-    lambda_mel=45.0,
-    lambda_fm=10.0,
-    lambda_phone=5.0
-):
-
-    # --------------------------------------------------------
-    # GAN Loss
-    # --------------------------------------------------------
-
-    loss_adv = 0.0
-
-    for logits in fake_logits:
-
-        loss_adv += generator_hinge_loss(
-            logits
-        )
-
-    # --------------------------------------------------------
-    # Mel Reconstruction Loss
-    # --------------------------------------------------------
-
-    loss_mel = mel_reconstruction_loss(
-        fake_mel,
-        real_mel
-    )
-
-    # --------------------------------------------------------
-    # Feature Matching Loss
-    # --------------------------------------------------------
-
-    loss_fm = feature_matching_loss(
-        real_features,
-        fake_features
-    )
-
-    # --------------------------------------------------------
-    # Phoneme Loss
-    # --------------------------------------------------------
-
-    if (
-        phoneme_logits is not None
-        and phoneme_target is not None
-    ):
-
-        loss_phone = phoneme_loss(
-            phoneme_logits,
-            phoneme_target
-        )
-
-    else:
-
-        loss_phone = torch.tensor(
-            0.0,
-            device=fake_mel.device
-        )
-
-    # --------------------------------------------------------
-    # Total Generator Loss
-    # --------------------------------------------------------
-
-    total_loss = (
-
-        lambda_adv * loss_adv
-
-        + lambda_mel * loss_mel
-
-        + lambda_fm * loss_fm
-
-        + lambda_phone * loss_phone
-
-    )
-
-    return {
-
-        "total": total_loss,
-
-        "adv": loss_adv,
-
-        "mel": loss_mel,
-
-        "fm": loss_fm,
-
-        "phone": loss_phone
-    }
+def multi_resolution_mel_loss(fake, real):
+    """
+    Simple multi-resolution mel loss: compare at full, half, and quarter time
+    resolutions. This is NOT a waveform STFT loss; it is appropriate as an
+    additional mel-domain consistency term.
+    """
+    total = 0.0
+    for factor in (1, 2, 4):
+        if factor == 1:
+            f, r = fake, real
+        else:
+            f = F.avg_pool1d(fake, kernel_size=factor, stride=factor,
+                             ceil_mode=False)
+            r = F.avg_pool1d(real, kernel_size=factor, stride=factor,
+                             ceil_mode=False)
+        total = total + F.l1_loss(f, r)
+    return total / 3.0
 
 g_model1 = Musiclm0().to(device)
 # d_model1 = GanModel().to(device)
-d_model2 = MultiScaleMelDiscriminator(80).to(device)
+d_model2 = MultiScaleDiscriminator(scales=3).to(device)
 # d_model3 = GanModel().to(device)
 # d_model3 = MultiScaleDiscriminator().to(device)
 # g_model1 = torch.load(
@@ -633,24 +250,22 @@ while True:
                 fake_data3, fake_data4,output_real2,output_real_feat2, output_fake3, output_fake4,output_fake_for_G3, output_fake_for_G_feat3, output_fake_for_G4, output_fake_for_G_feat4=None, None, None, None, None, None, None, None, None, None
                 # with torch.autocast("cuda", dtype=torch.bfloat16):
                 # output_real3 = d_model1(accompaniment_music_data)
-                output_real4, real_features = d_model2(accompaniment_music_data, return_features=True)
+                output_real4, _ = d_model2(accompaniment_music_data.permute(0,2,1))
                 # output_real5 = d_model3(torch.logaddexp(accompaniment_music_data*12, song_data*12)/12)
             
                 fake_data4 = g_model1.forward(string_data, breaking_music_data) 
                 # output_fake3 = d_model1(fake_data3.detach()) 
-                output_fake4, fake_features = d_model2(fake_data4.detach(), return_features=True)
+                output_fake4, _ = d_model2(fake_data4.detach().permute(0,2,1))
                 # output_fake5 = d_model3(fake_data5.detach())
 
                 # loss_D_3 = criterion_gan(output_real3, torch.ones_like(output_real3)) + criterion_gan(output_fake3, torch.zeros_like(output_fake3))
-                loss_D_4 = discriminator_loss(output_real4, output_fake4)
+                loss_d = discriminator_hinge_loss(output_real4, output_fake4)
                 # loss_D_5 = criterion_gan(output_real5, torch.ones_like(output_real5)) + criterion_gan(output_fake5, torch.zeros_like(output_fake5))
-                loss_D =loss_D_4 #+ loss_D_5
+                loss_D =loss_d #+ loss_D_5
             
                 optimizerD.zero_grad()
                 loss_D.backward()
-                # nn.utils.clip_grad_norm_(d_model1.parameters(), max_norm=1.0)
-                nn.utils.clip_grad_norm_(d_model2.parameters(), max_norm=1.0)
-                nn.utils.clip_grad_norm_(g_model1.parameters(), max_norm=1.0)
+                nn.utils.clip_grad_norm_(d_model2.parameters(), max_norm=5.0)
                 optimizerD.step()
             
                 before_params = {
@@ -664,37 +279,32 @@ while True:
                 fake_data4 = g_model1.forward(string_data, breaking_music_data) 
 
                 # output_real3 = d_model1(accompaniment_music_data)
-                output_real4, real_features = d_model2(accompaniment_music_data, return_features=True)
+                output_real4, real_features = d_model2(accompaniment_music_data.permute(0,2,1))
                 # output_real5 = d_model3(torch.logaddexp(accompaniment_music_data*12, song_data*12)/12)
 
                 # output_fake_for_G3 = d_model1(fake_data3)      
-                output_fake_for_G4, fake_features = d_model2(fake_data4, return_features=True)
+                output_fake_for_G4, fake_features = d_model2(fake_data4.permute(0,2,1))
                 # output_fake_for_G5 = d_model3(fake_data5)
 
                 # loss_l3_1 = criterion_gan(output_fake_for_G3, torch.ones_like(output_fake_for_G3))
                 # loss_l3_2 = mel_structure_loss(fake_data3, accompaniment_music_data)
-                loss_l4_1 = generator_loss(
 
-                    fake_mel=fake_data4,
-
-                    real_mel=accompaniment_music_data,
-
-                    fake_logits=output_fake_for_G4,
-
-                    real_features=real_features,
-
-                    fake_features=fake_features,
-
+                l1, mse = reconstruction_losses(fake_data4, accompaniment_music_data)
+                mr_mel = multi_resolution_mel_loss(fake_data4, accompaniment_music_data)
+                adv = generator_hinge_loss(output_fake_for_G4)
+                fm = feature_matching_loss(real_features, fake_features)
+                
+                loss_G = loss_g = (
+                    LAMBDA_L1 * l1
+                    + LAMBDA_MSE * mse
+                    + 5.0 * mr_mel
+                    + LAMBDA_ADV * adv
+                    + LAMBDA_FM * fm
                 )
-
-                loss_G = loss_l4_1["total"]
-              
 
                 optimizerG.zero_grad()
                 loss_G.backward()
-                # nn.utils.clip_grad_norm_(d_model1.parameters(), max_norm=1.0)
-                nn.utils.clip_grad_norm_(d_model2.parameters(), max_norm=1.0)
-                nn.utils.clip_grad_norm_(g_model1.parameters(), max_norm=1.0)                 
+                nn.utils.clip_grad_norm_(g_model1.parameters(), max_norm=5.0)                 
                 optimizerG.step()
 
                 grad_sum = 0.0
