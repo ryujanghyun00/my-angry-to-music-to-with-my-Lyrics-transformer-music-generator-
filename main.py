@@ -114,12 +114,12 @@ model0 = Musiclm0().to(device)
 model1 = Musiclm1().to(device)
 
 model0 = torch.load(
-    "./pth_save/0g200000.pt",
+    "./pth_save/0g100000.pt",
     weights_only=False,
 )
 
 model1 = torch.load(
-    "./pth_save/1g245000.pt",
+    "./pth_save/1g120000.pt",
     weights_only=False,
 )
 model0.to(device)
