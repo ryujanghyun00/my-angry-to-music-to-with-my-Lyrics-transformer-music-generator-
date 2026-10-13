@@ -69,10 +69,10 @@ class Musiclm0(nn.Module):
         self.positinoal_encoding = PositionalEncoding(d_model, max_len=250*4)  
         #8000 4000 2000 1000 500
 
-        self.transformer1s_1 = nn.TransformerEncoder(nn.TransformerEncoderLayer(d_model, 32, dropout=0.0, batch_first=True), 6)
-        self.transformer1s_2 = nn.MultiheadAttention(d_model, 32, batch_first=True)
-        self.transformer1s_3 = nn.MultiheadAttention(d_model, 32, batch_first=True)
-        # self.transformer1s_4 = nn.TransformerEncoder(nn.TransformerEncoderLayer(d_model, 32, dropout=0.0, batch_first=True), 6)
+        # self.transformer1s_1 = nn.TransformerEncoder(nn.TransformerEncoderLayer(d_model, 8, batch_first=True), 1)
+        # self.transformer1s_2 = nn.MultiheadAttention(d_model, 8, batch_first=True)
+        self.transformer1s_3 = nn.ModuleList([nn.MultiheadAttention(d_model, 8, batch_first=True) for _ in range(10)])
+        # self.transformer1s_4 = nn.TransformerEncoder(nn.TransformerEncoderLayer(d_model, 8, batch_first=True), 1)
         self.embedding1 = nn.Embedding(n_symbols, 80)#160)
         self.text_prenet1 = myPrenet()
         self.prenet1 =  myPrenet()
@@ -92,11 +92,11 @@ class Musiclm0(nn.Module):
         y= self.prenet1(y2)
         x2 = self.text_prenet1(x2)
 
-        y = self.transformer1s_1(self.positinoal_encoding(y))
-        x2, _ = self.transformer1s_2(self.positinoal_encoding(y), self.positinoal_encoding(x2), self.positinoal_encoding(x2))
-        y, _ = self.transformer1s_3(self.positinoal_encoding(x2), self.positinoal_encoding(y), self.positinoal_encoding(y))
-        # y = self.transformer1s_4(y)
-        mel1 = self.linear_projection1(y.permute(0,2,1)).permute(0,2,1)
+        out=y
+        for transformer in self.transformer1s_3:
+            out1, _ = transformer(self.positinoal_encoding(y), self.positinoal_encoding(out), self.positinoal_encoding(out))
+            out = out1 + out
+        mel1 = self.linear_projection1(out.permute(0,2,1)).permute(0,2,1)
         return mel1
 
 
@@ -217,7 +217,7 @@ d_model2 = MultiScaleDiscriminator(scales=3).to(device)
 # )
 
 
-optimizerG = torch.optim.Adam(g_model1.parameters(), lr=1e-4, betas=(0.0, 0.99))
+optimizerG = torch.optim.Adam(g_model1.parameters(), lr=1e-4)#, betas=(0.0, 0.99))
 optimizerD = torch.optim.Adam(
         list(d_model2.parameters()), lr=1e-4, betas=(0.0, 0.99))
 
@@ -225,7 +225,7 @@ while_number = 0
 encoding_texts_batch =np.load(f"./np_data/encoding_texts_batch.npy")
 break_batch = np.load(f"./np_data/break_batch.npy")
 accompaniment_batch = np.load(f"./np_data/accompaniment_batch.npy")
-origin_batch = np.load(f"./np_data/origin_batch.npy")
+# origin_batch = np.load(f"./np_data/origin_batch.npy")
 song_batch = np.load(f"./np_data/song_batch.npy")
 
 scalerG = torch.amp.GradScaler("cuda")
@@ -247,26 +247,26 @@ while True:
                 song_data=torch.from_numpy(song_batch[epoch:epoch+5]).type(torch.float).to(device)
            
            
-                fake_data3, fake_data4,output_real2,output_real_feat2, output_fake3, output_fake4,output_fake_for_G3, output_fake_for_G_feat3, output_fake_for_G4, output_fake_for_G_feat4=None, None, None, None, None, None, None, None, None, None
-                # with torch.autocast("cuda", dtype=torch.bfloat16):
-                # output_real3 = d_model1(accompaniment_music_data)
-                output_real4, _ = d_model2(accompaniment_music_data.permute(0,2,1))
-                # output_real5 = d_model3(torch.logaddexp(accompaniment_music_data*12, song_data*12)/12)
+                # fake_data3, fake_data4,output_real2,output_real_feat2, output_fake3, output_fake4,output_fake_for_G3, output_fake_for_G_feat3, output_fake_for_G4, output_fake_for_G_feat4=None, None, None, None, None, None, None, None, None, None
+                # # with torch.autocast("cuda", dtype=torch.bfloat16):
+                # # output_real3 = d_model1(accompaniment_music_data)
+                # output_real4, _ = d_model2(accompaniment_music_data.permute(0,2,1))
+                # # output_real5 = d_model3(torch.logaddexp(accompaniment_music_data*12, song_data*12)/12)
             
-                fake_data4 = g_model1.forward(string_data, breaking_music_data) 
-                # output_fake3 = d_model1(fake_data3.detach()) 
-                output_fake4, _ = d_model2(fake_data4.detach().permute(0,2,1))
-                # output_fake5 = d_model3(fake_data5.detach())
+                # fake_data4 = g_model1.forward(string_data, breaking_music_data) 
+                # # output_fake3 = d_model1(fake_data3.detach()) 
+                # output_fake4, _ = d_model2(fake_data4.detach().permute(0,2,1))
+                # # output_fake5 = d_model3(fake_data5.detach())
 
-                # loss_D_3 = criterion_gan(output_real3, torch.ones_like(output_real3)) + criterion_gan(output_fake3, torch.zeros_like(output_fake3))
-                loss_d = discriminator_hinge_loss(output_real4, output_fake4)
-                # loss_D_5 = criterion_gan(output_real5, torch.ones_like(output_real5)) + criterion_gan(output_fake5, torch.zeros_like(output_fake5))
-                loss_D =loss_d #+ loss_D_5
+                # # loss_D_3 = criterion_gan(output_real3, torch.ones_like(output_real3)) + criterion_gan(output_fake3, torch.zeros_like(output_fake3))
+                # loss_d = discriminator_hinge_loss(output_real4, output_fake4)
+                # # loss_D_5 = criterion_gan(output_real5, torch.ones_like(output_real5)) + criterion_gan(output_fake5, torch.zeros_like(output_fake5))
+                # loss_D =loss_d #+ loss_D_5
             
-                optimizerD.zero_grad()
-                loss_D.backward()
-                nn.utils.clip_grad_norm_(d_model2.parameters(), max_norm=5.0)
-                optimizerD.step()
+                # optimizerD.zero_grad()
+                # loss_D.backward()
+                # # nn.utils.clip_grad_norm_(d_model2.parameters(), max_norm=5.0)
+                # optimizerD.step()
             
                 before_params = {
                     name: param.detach().clone()
@@ -291,20 +291,20 @@ while True:
 
                 l1, mse = reconstruction_losses(fake_data4, accompaniment_music_data)
                 mr_mel = multi_resolution_mel_loss(fake_data4, accompaniment_music_data)
-                adv = generator_hinge_loss(output_fake_for_G4)
-                fm = feature_matching_loss(real_features, fake_features)
+                # adv = generator_hinge_loss(output_fake_for_G4)
+                # fm = feature_matching_loss(real_features, fake_features)
                 
                 loss_G = loss_g = (
                     LAMBDA_L1 * l1
                     + LAMBDA_MSE * mse
                     + 5.0 * mr_mel
-                    + LAMBDA_ADV * adv
-                    + LAMBDA_FM * fm
+                    # + LAMBDA_ADV * adv
+                    # + LAMBDA_FM * fm
                 )
 
                 optimizerG.zero_grad()
                 loss_G.backward()
-                nn.utils.clip_grad_norm_(g_model1.parameters(), max_norm=5.0)                 
+                # nn.utils.clip_grad_norm_(g_model1.parameters(), max_norm=5.0)                 
                 optimizerG.step()
 
                 grad_sum = 0.0
