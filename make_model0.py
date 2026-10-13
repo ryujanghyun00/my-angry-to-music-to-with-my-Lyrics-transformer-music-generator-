@@ -71,7 +71,7 @@ class Musiclm0(nn.Module):
 
         # self.transformer1s_1 = nn.TransformerEncoder(nn.TransformerEncoderLayer(d_model, 8, batch_first=True), 1)
         # self.transformer1s_2 = nn.MultiheadAttention(d_model, 8, batch_first=True)
-        self.transformer1s_3 = nn.ModuleList([nn.MultiheadAttention(d_model, 8, batch_first=True) for _ in range(10)])
+        self.transformer1s_3 = nn.ModuleList([nn.MultiheadAttention(d_model, 8, batch_first=True) for _ in range(20)])
         # self.transformer1s_4 = nn.TransformerEncoder(nn.TransformerEncoderLayer(d_model, 8, batch_first=True), 1)
         self.embedding1 = nn.Embedding(n_symbols, 80)#160)
         self.text_prenet1 = myPrenet()
