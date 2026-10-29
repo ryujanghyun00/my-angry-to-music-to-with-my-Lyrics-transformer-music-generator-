@@ -42,7 +42,7 @@ class Musiclm0(nn.Module):
 
         # self.transformer1s_1 = nn.TransformerEncoder(nn.TransformerEncoderLayer(d_model, 8, batch_first=True), 1)
         # self.transformer1s_2 = nn.MultiheadAttention(d_model, 8, batch_first=True)
-        self.transformer1s_3 = nn.ModuleList([nn.MultiheadAttention(d_model, 8, batch_first=True) for _ in range(10)])
+        self.transformer1s_3 = nn.ModuleList([nn.Transformer(d_model, 8, 1, 1, batch_first=True) for _ in range(12)])
         # self.transformer1s_4 = nn.TransformerEncoder(nn.TransformerEncoderLayer(d_model, 8, batch_first=True), 1)
         self.embedding1 = nn.Embedding(n_symbols, 80)#160)
         self.text_prenet1 = myPrenet()
@@ -57,7 +57,7 @@ class Musiclm0(nn.Module):
             nn.Tanh()
         )
                         
-  
+       
     def forward(self, x, y2):
         x2 = self.embedding1(x)
         y= self.prenet1(y2)
@@ -65,11 +65,10 @@ class Musiclm0(nn.Module):
 
         out=y
         for transformer in self.transformer1s_3:
-            out1, _ = transformer(self.positinoal_encoding(y), self.positinoal_encoding(out), self.positinoal_encoding(out))
+            out1 = transformer(self.positinoal_encoding(x2), self.positinoal_encoding(out))
             out = out1 + out
         mel1 = self.linear_projection1(out.permute(0,2,1)).permute(0,2,1)
         return mel1
-
 class Musiclm1(nn.Module):
     def __init__(self):
         super().__init__()
@@ -81,7 +80,7 @@ class Musiclm1(nn.Module):
         self.positinoal_encoding = PositionalEncoding(d_model, max_len=250*8)  
         #8000 4000 2000 1000 500
 
-        self.transformer4s_1 = nn.ModuleList([nn.MultiheadAttention(d_model, 8, batch_first=True) for _ in range(10)])
+        self.transformer4s_1 = nn.ModuleList([nn.Transformer(d_model, 8, 1, 1, batch_first=True) for _ in range(12)])
       
         self.embedding3 = nn.Embedding(n_symbols, 80)#160)
         self.text_prenet3 = myPrenet()
@@ -104,7 +103,7 @@ class Musiclm1(nn.Module):
 
         out = x2 
         for transformer in self.transformer4s_1:
-            out1, _ = transformer(self.positinoal_encoding(y),self.positinoal_encoding(out), self.positinoal_encoding(out))
+            out1 = transformer(self.positinoal_encoding(y), self.positinoal_encoding(out))
             out = out1 + out
         mel3 = self.linear_projection3(out.permute(0,2,1)).permute(0,2,1)
         return mel3
@@ -114,12 +113,12 @@ model0 = Musiclm0().to(device)
 model1 = Musiclm1().to(device)
 
 model0 = torch.load(
-    "./pth_save/0g100000.pt",
+    "./pth_save/0g810000.pt",
     weights_only=False,
 )
 
 model1 = torch.load(
-    "./pth_save/1g100000.pt",
+    "./pth_save/1g525000.pt",
     weights_only=False,
 )
 model0.to(device)
@@ -245,120 +244,120 @@ with torch.no_grad():
 
 
 
-# with torch.no_grad():
+with torch.no_grad():
  
 
-#     D1_batch = torch.tensor([], dtype=torch.float).to(device)
-#     encoding_texts = torch.tensor([], dtype=torch.long).to(device)
+    D1_batch = torch.tensor([], dtype=torch.float).to(device)
+    encoding_texts = torch.tensor([], dtype=torch.long).to(device)
     
     
-#     wav, sr = librosa.load(
-#         './input_data/distorted_song.mp3',
-#         sr=22050
-#     )
+    wav, sr = librosa.load(
+        './input_data/distorted_song.wav',
+        sr=22050
+    )
 
-#     mel = librosa.feature.melspectrogram(
-#                 y=wav,
-#                 sr=sr,
-#                 n_fft=1024*2,
-#                 hop_length=1024,
-#                 n_mels=80,
-#                 power=2.0
-#             )
+    mel = librosa.feature.melspectrogram(
+                y=wav,
+                sr=sr,
+                n_fft=1024*2,
+                hop_length=1024,
+                n_mels=80,
+                power=2.0
+            )
 
-#     # Mel → dB
-#     mel_db = np.log(mel+1e-5)/12
-#     D1 = torch.tensor(mel_db).unsqueeze(0).to(device)
+    # Mel → dB
+    mel_db = np.log(mel+1e-5)/12
+    D1 = torch.tensor(mel_db).unsqueeze(0).to(device)
 
     
-#     if(D1.shape[2]<8000):
-#         D1 = torch.cat((D1, torch.zeros(1, D1.shape[1], 8000-D1.shape[2]).to(device)), dim=2)
+    if(D1.shape[2]<8000):
+        D1 = torch.cat((D1, torch.zeros(1, D1.shape[1], 8000-D1.shape[2]).to(device)), dim=2)
     
-#     D1_batch = torch.cat((D1_batch, D1), dim=0)  # (Batch, Freq, Time)
+    D1_batch = torch.cat((D1_batch, D1), dim=0)  # (Batch, Freq, Time)
     
 
-#     with open('./input_data/gasa.txt', 'r', encoding='utf-8') as f:
-#         gasa_text = f.readlines()
-#         gasa_text = ''.join(gasa_text)
-#         # print(gasa_text)
-#         encoding_text, _=gasa_encode(gasa_text)
+    with open('./input_data/gasa.txt', 'r', encoding='utf-8') as f:
+        gasa_text = f.readlines()
+        gasa_text = ''.join(gasa_text)
+        # print(gasa_text)
+        encoding_text, _=gasa_encode(gasa_text)
 
-#         encoding_texts = torch.cat((encoding_texts, encoding_text.to(device)), dim=0) 
+        encoding_texts = torch.cat((encoding_texts, encoding_text.to(device)), dim=0) 
 
-#     encoding_texts = encoding_texts.type(torch.long).to(device)
-#     D1_batch = D1_batch.permute(0,2,1).type(torch.float).to(device)
+    encoding_texts = encoding_texts.type(torch.long).to(device)
+    D1_batch = D1_batch.permute(0,2,1).type(torch.float).to(device)
 
-#     song3_1  = model0(encoding_texts, D1_batch)
-#     song3_2  = model1(encoding_texts, song3_1)
-#     song3_3 = torch.logaddexp(song3_1*12, song3_2*12)/12
+    song3_1  = model0(encoding_texts, D1_batch)
+    song3_2  = model1(encoding_texts, song3_1)
+    song3_3 = torch.logaddexp(song3_1*12, song3_2*12)/12
 
-#     song4 = song3_1.permute(0,2,1)
+    song4 = song3_1.permute(0,2,1)
             
-#     song4=torch.exp(song4*12)
-#     mel_db_out = song4.type(torch.float).squeeze(0).cpu().numpy()   
-#     print('test1')
+    song4=torch.exp(song4*12)
+    mel_db_out = song4.type(torch.float).squeeze(0).cpu().numpy()   
+    print('test1')
 
-#     wav_recon = librosa.feature.inverse.mel_to_audio(
-#         mel_db_out,
-#         sr=22050,
-#         n_fft=1024*2,
-#         hop_length=1024,
-#         n_iter=80
-#     )
+    wav_recon = librosa.feature.inverse.mel_to_audio(
+        mel_db_out,
+        sr=22050,
+        n_fft=1024*2,
+        hop_length=1024,
+        n_iter=80
+    )
 
     
-#     sf.write(
-#         "./output_data/out_song2_1.wav",
-#         wav_recon,
-#         22050
-#     )
+    sf.write(
+        "./output_data/out_song2_1.wav",
+        wav_recon,
+        22050
+    )
 
-#     song4 = song3_2.permute(0,2,1)
+    song4 = song3_2.permute(0,2,1)
             
-#     song4=torch.exp(song4*12)
-#     mel_db_out = song4.type(torch.float).squeeze(0).cpu().numpy()   
-#     print('test1')
+    song4=torch.exp(song4*12)
+    mel_db_out = song4.type(torch.float).squeeze(0).cpu().numpy()   
+    print('test1')
 
-#     wav_recon = librosa.feature.inverse.mel_to_audio(
-#         mel_db_out,
-#         sr=22050,
-#         n_fft=1024*2,
-#         hop_length=1024,
-#         n_iter=80
-#     )
-
-    
-#     sf.write(
-#         "./output_data/out_song2_2.wav",
-#         wav_recon,
-#         22050
-#     )
+    wav_recon = librosa.feature.inverse.mel_to_audio(
+        mel_db_out,
+        sr=22050,
+        n_fft=1024*2,
+        hop_length=1024,
+        n_iter=80
+    )
 
     
+    sf.write(
+        "./output_data/out_song2_2.wav",
+        wav_recon,
+        22050
+    )
+
+    
 
 
-#     song4 = song3_3.permute(0,2,1)
+    song4 = song3_3.permute(0,2,1)
             
-#     song4=torch.exp(song4*12)
-#     mel_db_out = song4.type(torch.float).squeeze(0).cpu().numpy()   
-#     print('test1')
+    song4=torch.exp(song4*12)
+    mel_db_out = song4.type(torch.float).squeeze(0).cpu().numpy()   
+    print('test1')
 
-#     wav_recon = librosa.feature.inverse.mel_to_audio(
-#         mel_db_out,
-#         sr=22050,
-#         n_fft=1024*2,
-#         hop_length=1024,
-#         n_iter=80
-#     )
+    wav_recon = librosa.feature.inverse.mel_to_audio(
+        mel_db_out,
+        sr=22050,
+        n_fft=1024*2,
+        hop_length=1024,
+        n_iter=80
+    )
 
     
-#     sf.write(
-#         "./output_data/out_song2_3.wav",
-#         wav_recon,
-#         22050
-#     )
+    sf.write(
+        "./output_data/out_song2_3.wav",
+        wav_recon,
+        22050
+    )
 
-#     print("Recon shape:", wav_recon.shape)
+    print("Recon shape:", wav_recon.shape)
 
 
 
@@ -601,4 +600,118 @@ with torch.no_grad():
 
     print("Recon shape:", wav_recon.shape)
 
+
+with torch.no_grad():
+ 
+
+    D1_batch = torch.tensor([], dtype=torch.float).to(device)
+    encoding_texts = torch.tensor([], dtype=torch.long).to(device)
     
+    
+    wav, sr = librosa.load(
+        './input_data/distorted_song2.mp3',
+        sr=22050
+    )
+
+    mel = librosa.feature.melspectrogram(
+                y=wav,
+                sr=sr,
+                n_fft=1024*2,
+                hop_length=1024,
+                n_mels=80,
+                power=2.0
+            )
+
+    # Mel → dB
+    mel_db = np.log(mel+1e-5)/12
+    D1 = torch.tensor(mel_db).unsqueeze(0).to(device)
+
+    
+    if(D1.shape[2]<8000):
+        D1 = torch.cat((D1, torch.zeros(1, D1.shape[1], 8000-D1.shape[2]).to(device)), dim=2)
+    
+    D1_batch = torch.cat((D1_batch, D1), dim=0)  # (Batch, Freq, Time)
+    
+
+    with open('./input_data/gasa2.txt', 'r', encoding='utf-8') as f:
+        gasa_text = f.readlines()
+        gasa_text = ''.join(gasa_text)
+        # print(gasa_text)
+        encoding_text, _=gasa_encode(gasa_text)
+
+        encoding_texts = torch.cat((encoding_texts, encoding_text.to(device)), dim=0) 
+
+    encoding_texts = encoding_texts.type(torch.long).to(device)
+    D1_batch = D1_batch.permute(0,2,1).type(torch.float).to(device)
+
+    song3_1  = model0(encoding_texts, D1_batch)
+    song3_2  = model1(encoding_texts, song3_1)
+    song3_3 = torch.logaddexp(song3_1*12, song3_2*12)/12
+
+    song4 = song3_1.permute(0,2,1)
+            
+    song4=torch.exp(song4*12)
+    mel_db_out = song4.type(torch.float).squeeze(0).cpu().numpy()   
+    print('test1')
+
+    wav_recon = librosa.feature.inverse.mel_to_audio(
+        mel_db_out,
+        sr=22050,
+        n_fft=1024*2,
+        hop_length=1024,
+        n_iter=80
+    )
+
+    
+    sf.write(
+        "./output_data/out_song5_1.wav",
+        wav_recon,
+        22050
+    )
+
+    song4 = song3_2.permute(0,2,1)
+            
+    song4=torch.exp(song4*12)
+    mel_db_out = song4.type(torch.float).squeeze(0).cpu().numpy()   
+    print('test1')
+
+    wav_recon = librosa.feature.inverse.mel_to_audio(
+        mel_db_out,
+        sr=22050,
+        n_fft=1024*2,
+        hop_length=1024,
+        n_iter=80
+    )
+
+    
+    sf.write(
+        "./output_data/out_song5_2.wav",
+        wav_recon,
+        22050
+    )
+
+    
+
+
+    song4 = song3_3.permute(0,2,1)
+            
+    song4=torch.exp(song4*12)
+    mel_db_out = song4.type(torch.float).squeeze(0).cpu().numpy()   
+    print('test1')
+
+    wav_recon = librosa.feature.inverse.mel_to_audio(
+        mel_db_out,
+        sr=22050,
+        n_fft=1024*2,
+        hop_length=1024,
+        n_iter=80
+    )
+
+    
+    sf.write(
+        "./output_data/out_song5_3.wav",
+        wav_recon,
+        22050
+    )
+
+    print("Recon shape:", wav_recon.shape)
