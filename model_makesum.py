@@ -122,10 +122,12 @@ class Musiclm0(nn.Module):
 
         # self.transformer1s_1 = nn.TransformerEncoder(nn.TransformerEncoderLayer(d_model, 8, batch_first=True), 1)
         # self.transformer1s_2 = nn.MultiheadAttention(d_model, 8, batch_first=True)
-        self.transformer1s_3 = nn.ModuleList([nn.Transformer(d_model, 8, 1, 1,  batch_first=True) for _ in range(15)])
+        self.transformer1s_3 = nn.ModuleList([nn.Transformer(d_model, 8, 1, 1,  batch_first=True) for _ in range(8)])
+        self.transformer1s_2 = nn.ModuleList([nn.Transformer(d_model, 8, 1, 1,  batch_first=True) for _ in range(8)])
         # self.transformer1s_4 = nn.TransformerEncoder(nn.TransformerEncoderLayer(d_model, 8, batch_first=True), 1)
         self.embedding1 = nn.Embedding(n_symbols, 80)#160)
         self.text_prenet1 = myPrenet()
+        self.text_prenet2 = myPrenet()
         self.prenet1 =  myPrenet()
       
         self.linear_projection1 = nn.Sequential(
@@ -141,13 +143,22 @@ class Musiclm0(nn.Module):
     def forward(self, x, y2):
         x2 = self.embedding1(x)
         y= self.prenet1(y2)
-        x2 = self.text_prenet1(x2)
+        
+        x_1 = self.text_prenet1(x2)
+        x_2 = self.text_prenet2(x2)
+                
+        out_1 = self.positinoal_encoding(x_1)
+        y_1 = self.positinoal_encoding(y)
+        for transformer in self.transformer1s_2:
+            out1 = transformer(y_1, out_1)
+            out_1 = out1 + out_1
 
-        out=y
+        out_1 = self.positinoal_encoding(out_1)
+        x_2=self.positinoal_encoding(x_2)
         for transformer in self.transformer1s_3:
-            out1 = transformer(self.positinoal_encoding(x2), self.positinoal_encoding(out))
-            out = out1 + out
-        mel1 = self.linear_projection1(out.permute(0,2,1)).permute(0,2,1)
+            out1 = transformer(x_2 ,out_1)
+            out_1 = out1 + out_1
+        mel1 = self.linear_projection1(out_1.permute(0,2,1)).permute(0,2,1)
         return mel1
 class Musiclm1(nn.Module):
     def __init__(self):
@@ -160,10 +171,13 @@ class Musiclm1(nn.Module):
         self.positinoal_encoding = PositionalEncoding(d_model, max_len=250*4)  
         #8000 4000 2000 1000 500
 
-        self.transformer1s_3 = nn.ModuleList([nn.Transformer(d_model, 8, 1, 1,  batch_first=True) for _ in range(15)])
+        self.transformer1s_3 = nn.ModuleList([nn.Transformer(d_model, 8, 1, 1,  batch_first=True) for _ in range(8)])
+        self.transformer2s_3 = nn.ModuleList([nn.Transformer(d_model, 8, 1, 1,  batch_first=True) for _ in range(8)])
+
         self.embedding1 = nn.Embedding(n_symbols, 80)#160)
         self.text_prenet1 = myPrenet()
         self.prenet1 =  myPrenet()
+        self.prenet2 =  myPrenet()
       
         self.linear_projection1 = nn.Sequential(
             nn.ConvTranspose1d(512, 320, 4, 2, 1),  
@@ -177,58 +191,32 @@ class Musiclm1(nn.Module):
        
     def forward(self, x, y2):
         x2 = self.embedding1(x)
-        y= self.prenet1(y2)
+        y1= self.prenet1(y2)
+        y_2= self.prenet2(y2)
         x2 = self.text_prenet1(x2)
 
-        out=x2
+        x2_1 = self.positinoal_encoding(x2)
+        out_1 = self.positinoal_encoding(y1)
         for transformer in self.transformer1s_3:
-            out1 = transformer(self.positinoal_encoding(y), self.positinoal_encoding(out))
-            out = out1 + out
-        mel1 = self.linear_projection1(out.permute(0,2,1)).permute(0,2,1)
+            out1 = transformer(x2_1, out_1)
+            out_1 = out1 + out_1
+
+        y_2 = self.positinoal_encoding(y_2)
+        out_1=self.positinoal_encoding(out_1)
+        for transformer in self.transformer2s_3:
+            out1 = transformer(y_2, out_1)
+            out_1 = out1 + out_1
+        mel1 = self.linear_projection1(out_1.permute(0,2,1)).permute(0,2,1)
         return mel1
 
-class Musiclmsum(nn.Module):
-    def __init__(self, number0=None, number1=None):
+class Musiclmsum2(nn.Module):
+    def __init__(self):
         super().__init__()
-
         self.lm0 = Musiclm0().to(device)
         self.lm1 = Musiclm1().to(device)
-        if number0 != None and number1 != None:
-
-            __main__.Musiclm0 = Musiclm0
-            self.lm0 = Musiclm0().to(device)
-            # self.d0 = MultiScaleDiscriminator().to(device)
-            self.lm0 = torch.load(
-                "./pth_save/3g500000.pt",
-                weights_only=False,
-            )
-            # self.d0 = torch.load(
-            #     "./pth_save/3d500000.pt",
-            #     weights_only=False,
-            # )
-            __main__.Musiclm0 = Musiclm1
-            self.lm1 = Musiclm1().to(device)
-            # self.d1 = MultiScaleDiscriminator().to(device)
-            self.lm1 = torch.load(
-                "./pth_save/4g325000.pt",
-                weights_only=False,
-            )
-            # self.d1 = torch.load(
-            #     "./pth_save/4d325000.pt",
-            #     weights_only=False,
-            # )
-    def forward(self, x, y1):    
+    def forward(self, x, y1):   
         out1 = self.lm0(x, y1)
         out2 = self.lm1(x, out1)
-        return out1, out2
-class Musiclmsum2(nn.Module):
-    def __init__(self, number):
-        super().__init__()
-        self.ml = Musiclmsum().to(device)
-        if number != None:
-            self.ml.load_state_dict(torch.load(f"./pth_save/5g100000.pt", map_location=device))
-    def forward(self, x, y1):   
-        out1, out2= self.ml(x, y1)
         out3 = torch.logaddexp(out1*12, out2*12)/12
         return out1, out2, out3
 from torch.nn.utils import spectral_norm
@@ -362,22 +350,25 @@ def feature_matching_loss(real_outputs, fake_outputs):
 
 criterion = MelSpectrogramDetailLoss()
 
-g_model = Musiclmsum2(True).to(device)
+g_model = Musiclmsum2().to(device)
 d_model1 = MultiScaleDiscriminator().to(device)
 d_model2 = MultiScaleDiscriminator().to(device)
 d_model3 = MultiScaleDiscriminator().to(device)
-d_model1.load_state_dict(torch.load(f"./pth_save/51d100000.pt", map_location=device))
+# g_model.load_state_dict(torch.load(f"./pth_save/7g75000.pt", map_location=device))
+# d_model1.load_state_dict(torch.load(f"./pth_save/71d75000.pt", map_location=device))
+# d_model2.load_state_dict(torch.load(f"./pth_save/72d75000.pt", map_location=device))
+# d_model3.load_state_dict(torch.load(f"./pth_save/73d75000.pt", map_location=device))
 
-d_model2.load_state_dict(torch.load(f"./pth_save/52d100000.pt", map_location=device))
+
 optimizerG = torch.optim.Adam(
     g_model.parameters(),
-    lr=2e-5,
+    lr=1e-4,
     betas=(0.0, 0.99)
 )
 
 optimizerD = torch.optim.Adam(
     list(d_model1.parameters()) + list(d_model2.parameters()) + list(d_model3.parameters()),
-    lr=2e-5,
+    lr=1e-4,
     betas=(0.0, 0.99)
 )
 
@@ -390,16 +381,16 @@ LAMBDA_MR = 1.0
 
 
 while_number =0
-encoding_texts_batch2 =np.load(f"./np_data/encoding_texts_batch.npy")
-break_batch2 = np.load(f"./np_data/break_batch.npy")
-accompaniment_batch2 = np.load(f"./np_data/accompaniment_batch.npy")
+encoding_texts_batch =np.load(f"./np_data/encoding_texts_batch.npy")
+break_batch = np.load(f"./np_data/break_batch.npy")
+accompaniment_batch = np.load(f"./np_data/accompaniment_batch.npy")
 # origin_batch = np.load(f"./np_data/origin_batch.npy")
-song_batch2 = np.load(f"./np_data/song_batch.npy")
-encoding_texts_batch =np.load(f"./np_data_1/encoding_texts_batch.npy")
-break_batch = np.load(f"./np_data_1/break_batch.npy")
-accompaniment_batch = np.load(f"./np_data_1/accompaniment_batch.npy")
+song_batch = np.load(f"./np_data/song_batch.npy")
+encoding_texts_batch2 =np.load(f"./np_data_1/encoding_texts_batch.npy")
+break_batch2 = np.load(f"./np_data_1/break_batch.npy")
+accompaniment_batch2 = np.load(f"./np_data_1/accompaniment_batch.npy")
 # origin_batch = np.load(f"./np_data/origin_batch.npy")
-song_batch = np.load(f"./np_data_1/song_batch.npy")
+song_batch2 = np.load(f"./np_data_1/song_batch.npy")
 
 encoding_texts_batch = np.concatenate([encoding_texts_batch, encoding_texts_batch2], axis=0)
 break_batch = np.concatenate([break_batch, break_batch2], axis=0)
@@ -724,13 +715,13 @@ while True:
                     f"Recon: {loss_recon.item():.5f} | "
                     f"MR1: {mr_mel1.item():.5f} | "
                     f"ADV1: {loss_adv1.item():.5f} | "
-                    f"FM1: {loss_fm1.item():.5f}"
+                    f"FM1: {loss_fm1.item():.5f} | "
                     f"MR2: {mr_mel2.item():.5f} | "
                     f"ADV2: {loss_adv2.item():.5f} | "
-                    f"FM2: {loss_fm2.item():.5f}"
+                    f"FM2: {loss_fm2.item():.5f} | "
                     f"MR3: {mr_mel3.item():.5f} | "
                     f"ADV3: {loss_adv3.item():.5f} | "
-                    f"FM3: {loss_fm3.item():.5f}"
+                    f"FM3: {loss_fm3.item():.5f} |"
                  
                 )
                 
@@ -834,10 +825,10 @@ while True:
                             root.update()
                 
                 if while_number % 5000 == 0:
-                    torch.save(g_model.state_dict(), f"./pth_save/6g{while_number}.pt")
-                    torch.save(d_model1.state_dict(), f"./pth_save/61d{while_number}.pt")
-                    torch.save(d_model2.state_dict(), f"./pth_save/62d{while_number}.pt")
-                    torch.save(d_model3.state_dict(), f"./pth_save/63d{while_number}.pt")
+                    torch.save(g_model.state_dict(), f"./pth_save/8g{while_number}.pt")
+                    torch.save(d_model1.state_dict(), f"./pth_save/81d{while_number}.pt")
+                    torch.save(d_model2.state_dict(), f"./pth_save/82d{while_number}.pt")
+                    torch.save(d_model3.state_dict(), f"./pth_save/83d{while_number}.pt")
                
                     
 
