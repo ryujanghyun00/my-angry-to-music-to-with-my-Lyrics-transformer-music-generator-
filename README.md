@@ -42,13 +42,11 @@ https://www.paypal.com/ncp/payment/4YQLNPMPYN5CA
 
 코드 구조는
 
-                   |---   repeat ---|
-
+                                |---   repeat ---|
 strang music mp3 --- transformer-------  반주 mp3---------|
 
 가사 ---------------------|-----------------------------transformer-------------  음성노래mp3
-
-                                                |----------repeat-------|
+                                             |----------repeat-------|
 
 이런 형식입니다. 결과가 좀 낫게 나와서 다시 이걸로 학습 중입니다.
                                                 
